@@ -1,682 +1,549 @@
 """
-Decision Tree Auto-Approval Model
-===================================
+Decision Tree Auto-Approval Model  — clean rewrite
+=====================================================
 Target  : first_pass = 1 if rvsn_nbr == 1, else 0
-Approach: Shallow decision tree (max_depth 3-5) trained on historical estimates.
-          Outputs human-readable IF/THEN rules, feature importances,
-          performance metrics, and saves all charts + results to Excel.
+Outputs : charts in dt_output/, results in decision_tree_results.xlsx
 
 Update DATA_PATH before running.
+pip install scikit-learn matplotlib openpyxl pandas numpy
 """
 
 import pandas as pd
 import numpy as np
 import warnings
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.tree import DecisionTreeClassifier, export_text, plot_tree
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, confusion_matrix, roc_auc_score,
+    roc_curve, precision_recall_curve
+)
+from sklearn.tree import _tree
 
 warnings.filterwarnings("ignore")
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-DATA_PATH   = "your_estimates_file.csv"
-OUTPUT_DIR  = "dt_output"
-EXCEL_PATH  = "decision_tree_results.xlsx"
+DATA_PATH  = "your_estimates_file.csv"
+OUTPUT_DIR = "dt_output"
+EXCEL_PATH = "decision_tree_results.xlsx"
+
+# Leaf predicts AUTO-APPROVE when first-pass rate >= this value
+# Lower (0.60) = more coverage  |  Higher (0.80) = higher precision
+APPROVAL_THRESHOLD = 0.65
+
+# Minimum samples per leaf — key guard against overfitting
+MIN_LEAF = 300
 
 Path(OUTPUT_DIR).mkdir(exist_ok=True)
 
-# ── STYLE ─────────────────────────────────────────────────────────────────────
+# ── Chart style ───────────────────────────────────────────────────────────────
+GOLD, GREEN, RED, BLUE, AMBER, MUTED, WHITE = (
+    "#e0a84b", "#3fb950", "#f85149", "#58a6ff", "#d29922", "#7a8899", "#f0f4f8"
+)
 plt.rcParams.update({
-    "figure.facecolor" : "#0d1117",
-    "axes.facecolor"   : "#161b22",
-    "axes.edgecolor"   : "#2a3444",
-    "axes.labelcolor"  : "#7a8899",
-    "axes.titlecolor"  : "#f0f4f8",
-    "text.color"       : "#f0f4f8",
-    "xtick.color"      : "#7a8899",
-    "ytick.color"      : "#7a8899",
-    "grid.color"       : "#2a3444",
-    "grid.linestyle"   : "--",
-    "grid.alpha"       : 0.5,
-    "font.family"      : "monospace",
-    "figure.dpi"       : 130,
+    "figure.facecolor": "#0d1117", "axes.facecolor": "#161b22",
+    "axes.edgecolor":   "#2a3444", "axes.labelcolor": MUTED,
+    "axes.titlecolor":  WHITE,     "text.color":      WHITE,
+    "xtick.color":      MUTED,     "ytick.color":     MUTED,
+    "grid.color":       "#2a3444", "grid.linestyle":  "--",
+    "grid.alpha":       0.5,       "font.family":     "monospace",
+    "figure.dpi":       130,
 })
 
-GOLD   = "#e0a84b"
-GREEN  = "#3fb950"
-RED    = "#f85149"
-BLUE   = "#58a6ff"
-MUTED  = "#7a8899"
-WHITE  = "#f0f4f8"
-AMBER  = "#d29922"
-
-
-# ════════════════════════════════════════════════════════════════
-# 1.  LOAD & CLEAN
-# ════════════════════════════════════════════════════════════════
-print("── 1. Loading data ──────────────────────")
+# ═════════════════════════════════════════════════════════════════
+# 1. LOAD
+# ═════════════════════════════════════════════════════════════════
+print("── 1. Loading ───────────────────────────")
 df = pd.read_csv(DATA_PATH, low_memory=False)
-print(f"   Rows: {len(df):,}   Columns: {df.shape[1]}")
+print(f"   {len(df):,} rows  x  {df.shape[1]} columns")
 
-# Fix negative time_to_approve
 if "time_to_approve_days" in df.columns:
     df["time_to_approve_days"] = df["time_to_approve_days"].clip(lower=0)
 
-# Parse dates for feature engineering
-for col in ["est_recv_dte", "apprv_dte"]:
-    if col in df.columns:
-        df[col] = pd.to_datetime(df[col], errors="coerce")
-
-
-# ════════════════════════════════════════════════════════════════
-# 2.  TARGET VARIABLE
-# ════════════════════════════════════════════════════════════════
-print("\n── 2. Target variable ───────────────────")
+# ═════════════════════════════════════════════════════════════════
+# 2. TARGET
+# ═════════════════════════════════════════════════════════════════
 df["first_pass"] = (df["rvsn_nbr"] == 1).astype(int)
-print(f"   First-pass (1): {df['first_pass'].sum():,}  ({df['first_pass'].mean():.1%})")
-print(f"   Revised    (0): {(df['first_pass']==0).sum():,}  ({1-df['first_pass'].mean():.1%})")
+pos = df["first_pass"].mean()
+print(f"   first_pass=1 : {df['first_pass'].sum():,}  ({pos:.1%})")
+print(f"   first_pass=0 : {(df['first_pass']==0).sum():,}  ({1-pos:.1%})")
 
+# ═════════════════════════════════════════════════════════════════
+# 3. FEATURES
+# ═════════════════════════════════════════════════════════════════
+print("\n── 2. Feature engineering ───────────────")
 
-# ════════════════════════════════════════════════════════════════
-# 3.  FEATURE ENGINEERING
-# ════════════════════════════════════════════════════════════════
-print("\n── 3. Feature engineering ───────────────")
+global_mean = df["first_pass"].mean()
 
-# Vendor trust score (approval rate per vendor, shrunk toward mean)
-vendor_stats = (
+# Vendor score with Bayesian shrinkage, rounded to 2dp
+# (rounding reduces unique split points so tree stays readable)
+vstats = (
     df.groupby("vr_vndr_id")["first_pass"]
-    .agg(vendor_rate="mean", vendor_count="count")
+    .agg(vrate="mean", vcnt="count")
     .reset_index()
 )
-# Bayesian shrinkage: pull small-sample vendors toward global mean
-global_mean = df["first_pass"].mean()
-vendor_stats["vendor_trust_score"] = (
-    (vendor_stats["vendor_rate"] * vendor_stats["vendor_count"] + global_mean * 10)
-    / (vendor_stats["vendor_count"] + 10)
-)
-df = df.merge(vendor_stats[["vr_vndr_id","vendor_trust_score","vendor_count"]],
-              on="vr_vndr_id", how="left")
+K = 20
+vstats["vendor_score"] = (
+    (vstats["vrate"] * vstats["vcnt"] + global_mean * K)
+    / (vstats["vcnt"] + K)
+).round(2)
+df = df.merge(vstats[["vr_vndr_id", "vendor_score"]], on="vr_vndr_id", how="left")
 
-# Cost per labour hour
+# Cost per labour hour — capped and rounded
 df["cost_per_lbr_hr"] = np.where(
     df["lbr_hr_qty"] > 0,
-    df["est_tot_amt"] / df["lbr_hr_qty"],
+    (df["est_tot_amt"] / df["lbr_hr_qty"]).clip(upper=2000).round(0),
     0
 )
 
 # Vehicle age
 if "veh_yr" in df.columns:
-    df["veh_age"] = pd.Timestamp.now().year - df["veh_yr"]
+    df["veh_age"] = (pd.Timestamp.now().year - df["veh_yr"]).clip(lower=0, upper=30)
 
-# Month of estimate (seasonality)
-if "est_recv_dte" in df.columns:
-    df["est_month"] = df["est_recv_dte"].dt.month.fillna(0).astype(int)
+print("   vendor_score (Bayesian-smoothed, 2dp)")
+print("   cost_per_lbr_hr (capped $2k, rounded)")
+print("   veh_age")
 
-# Parts-to-total ratio proxy (if parts data available via discount cols)
-if "dmstc_part_disc_amt" in df.columns and "frn_part_disc_amt" in df.columns:
-    df["total_part_disc"] = df["dmstc_part_disc_amt"].fillna(0) + df["frn_part_disc_amt"].fillna(0)
-
-print("   Features engineered: vendor_trust_score, cost_per_lbr_hr, veh_age, est_month")
-
-
-# ════════════════════════════════════════════════════════════════
-# 4.  FEATURE SELECTION
-# ════════════════════════════════════════════════════════════════
-FEATURE_CANDIDATES = [
+# ═════════════════════════════════════════════════════════════════
+# 4. FEATURE SELECTION
+# ═════════════════════════════════════════════════════════════════
+CANDIDATES = [
+    "vendor_score",
+    "line_item_count",
     "est_tot_amt",
     "lbr_hr_qty",
-    "line_item_count",
-    "vendor_trust_score",
     "cost_per_lbr_hr",
     "negative_or_null_est_ind",
-    "est_disc_ind",
     "veh_age",
-    "est_month",
-    "total_part_disc",
+    "est_disc_ind",
 ]
+FEATURES = [f for f in CANDIDATES if f in df.columns]
 
-# Keep only features that exist in the dataframe
-FEATURES = [f for f in FEATURE_CANDIDATES if f in df.columns]
-print(f"\n   Features used: {FEATURES}")
-
-# Drop rows with any NaN in features or target
-model_df = df[FEATURES + ["first_pass"]].dropna()
-print(f"   Rows after dropping NaNs: {len(model_df):,}")
+model_df = df[FEATURES + ["first_pass"]].dropna().reset_index(drop=True)
+print(f"\n   Features  : {FEATURES}")
+print(f"   Model rows: {len(model_df):,}")
 
 X = model_df[FEATURES].values
 y = model_df["first_pass"].values
 
-
-# ════════════════════════════════════════════════════════════════
-# 5.  TRAIN / TEST SPLIT
-# ════════════════════════════════════════════════════════════════
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.tree import DecisionTreeClassifier, export_text
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix, classification_report, roc_auc_score,
-    roc_curve, precision_recall_curve
-)
-
-X_train, X_test, y_train, y_test = train_test_split(
+# ═════════════════════════════════════════════════════════════════
+# 5. TRAIN / TEST SPLIT
+# ═════════════════════════════════════════════════════════════════
+X_tr, X_te, y_tr, y_te = train_test_split(
     X, y, test_size=0.25, random_state=42, stratify=y
 )
-print(f"\n── 4. Train/test split ──────────────────")
-print(f"   Train: {len(X_train):,}   Test: {len(X_test):,}")
+print(f"\n── 3. Train/test split ──────────────────")
+print(f"   Train: {len(X_tr):,}   Test: {len(X_te):,}")
 
+# ═════════════════════════════════════════════════════════════════
+# 6. TRAIN TREES AT DEPTH 3, 4, 5
+# ═════════════════════════════════════════════════════════════════
+print(f"\n── 4. Training trees ────────────────────")
+print(f"   MIN_LEAF={MIN_LEAF}  APPROVAL_THRESHOLD={APPROVAL_THRESHOLD:.0%}\n")
 
-# ════════════════════════════════════════════════════════════════
-# 6.  TRAIN TREES AT MULTIPLE DEPTHS — PICK BEST
-# ════════════════════════════════════════════════════════════════
-# NOTE ON CLASS_WEIGHT:
-# We use None (no reweighting) because the dataset is only mildly
-# imbalanced (~57% first-pass). Using "balanced" over-penalises the
-# majority class and pushes ALL leaves to predict class 0 — which
-# is why auto-approve rules were empty in the previous run.
-# APPROVAL_THRESHOLD controls the precision/recall tradeoff:
-#   raise it (e.g. 0.75) → fewer but higher-confidence auto-approvals
-#   lower it  (e.g. 0.55) → more coverage, slightly lower precision
-
-APPROVAL_THRESHOLD = 0.65
-
-print("\n── 5. Training trees (depth 3–5) ────────")
-print(f"   Auto-approve threshold : {APPROVAL_THRESHOLD:.0%} leaf approval rate\n")
-
-results_by_depth = {}
+results = {}
 for depth in [3, 4, 5]:
-    clf = DecisionTreeClassifier(
+    t = DecisionTreeClassifier(
         max_depth=depth,
-        min_samples_leaf=100,
+        min_samples_leaf=MIN_LEAF,
+        min_samples_split=MIN_LEAF * 2,
         class_weight=None,
         criterion="gini",
-        random_state=42
+        random_state=42,
     )
-    clf.fit(X_train, y_train)
-    y_prob  = clf.predict_proba(X_test)[:, 1]
-    y_pred  = (y_prob >= APPROVAL_THRESHOLD).astype(int)
-    prec    = precision_score(y_test, y_pred, zero_division=0)
-    rec     = recall_score(y_test, y_pred, zero_division=0)
-    f1      = f1_score(y_test, y_pred, zero_division=0)
-    auc     = roc_auc_score(y_test, y_prob)
-    acc     = accuracy_score(y_test, y_pred)
-    cv_f1   = cross_val_score(clf, X, y, cv=5, scoring="f1").mean()
-    results_by_depth[depth] = {
-        "clf": clf, "y_pred": y_pred, "y_prob": y_prob,
-        "precision": prec, "recall": rec, "f1": f1,
-        "auc": auc, "accuracy": acc, "cv_f1": cv_f1
-    }
-    print(f"   Depth {depth}:  precision={prec:.3f}  recall={rec:.3f}  "
-          f"f1={f1:.3f}  AUC={auc:.3f}  CV-F1={cv_f1:.3f}")
+    t.fit(X_tr, y_tr)
+    prob = t.predict_proba(X_te)[:, 1]
+    pred = (prob >= APPROVAL_THRESHOLD).astype(int)
+    cv   = cross_val_score(
+        t, X, y, cv=StratifiedKFold(5, shuffle=True, random_state=42),
+        scoring="f1"
+    ).mean()
+    results[depth] = dict(
+        clf=t, prob=prob, pred=pred,
+        precision = precision_score(y_te, pred, zero_division=0),
+        recall    = recall_score(y_te, pred, zero_division=0),
+        f1        = f1_score(y_te, pred, zero_division=0),
+        auc       = roc_auc_score(y_te, prob),
+        accuracy  = accuracy_score(y_te, pred),
+        cv_f1     = cv,
+    )
+    r = results[depth]
+    print(f"   depth={depth}  P={r['precision']:.3f}  R={r['recall']:.3f}  "
+          f"F1={r['f1']:.3f}  AUC={r['auc']:.3f}  CV-F1={cv:.3f}")
 
-# Select best by F1
-best_depth = max(results_by_depth, key=lambda d: results_by_depth[d]["f1"])
-best       = results_by_depth[best_depth]
-clf        = best["clf"]
-y_pred     = best["y_pred"]
-y_prob     = best["y_prob"]
+best_depth = max(results, key=lambda d: results[d]["f1"])
+best = results[best_depth]
+clf  = best["clf"]
+print(f"\n   Best depth: {best_depth}  F1={best['f1']:.3f}")
 
-print(f"\n   Best depth: {best_depth}  (F1 = {best['f1']:.3f})")
+# ═════════════════════════════════════════════════════════════════
+# 7. METRICS
+# ═════════════════════════════════════════════════════════════════
+print("\n── 5. Metrics ───────────────────────────")
+cm = confusion_matrix(y_te, best["pred"])
+TN, FP, FN, TP = cm.ravel()
+print(f"   Precision={best['precision']:.1%}  Recall={best['recall']:.1%}  "
+      f"F1={best['f1']:.3f}  AUC={best['auc']:.3f}")
+print(f"   TP={TP:,}  FP={FP:,}  TN={TN:,}  FN={FN:,}")
 
-
-# ════════════════════════════════════════════════════════════════
-# 7.  METRICS
-# ════════════════════════════════════════════════════════════════
-print("\n── 6. Test set metrics ──────────────────")
-cm = confusion_matrix(y_test, y_pred)
-TP, FP, FN, TN = cm[1,1], cm[0,1], cm[1,0], cm[0,0]
-
-print(f"""
-   Accuracy    : {best['accuracy']:.1%}
-   Precision   : {best['precision']:.1%}
-   Recall      : {best['recall']:.1%}
-   F1          : {best['f1']:.3f}
-   ROC-AUC     : {best['auc']:.3f}
-   CV F1 (5-fold): {best['cv_f1']:.3f}
-
-   Confusion matrix (test set):
-            Predicted 0   Predicted 1
-   Actual 0     TN={TN:>5}     FP={FP:>5}
-   Actual 1     FN={FN:>5}     TP={TP:>5}
-""")
-
-
-# ════════════════════════════════════════════════════════════════
-# 8.  FEATURE IMPORTANCE
-# ════════════════════════════════════════════════════════════════
-fi = pd.DataFrame({
-    "feature"    : FEATURES,
-    "importance" : clf.feature_importances_
-}).sort_values("importance", ascending=False)
-print("── 7. Feature importances ───────────────")
+# ═════════════════════════════════════════════════════════════════
+# 8. FEATURE IMPORTANCE
+# ═════════════════════════════════════════════════════════════════
+fi = (
+    pd.DataFrame({"feature": FEATURES, "importance": clf.feature_importances_})
+    .sort_values("importance", ascending=False)
+)
+print("\n── 6. Feature importances ───────────────")
 print(fi.to_string(index=False))
 
+# ═════════════════════════════════════════════════════════════════
+# 9. PRINT TREE TEXT
+# ═════════════════════════════════════════════════════════════════
+print("\n── 7. Tree structure ────────────────────")
+print(export_text(clf, feature_names=FEATURES))
 
-# ════════════════════════════════════════════════════════════════
-# 9.  EXTRACT HUMAN-READABLE RULES
-# ════════════════════════════════════════════════════════════════
-print("\n── 8. Decision tree rules ───────────────")
-rules_text = export_text(clf, feature_names=FEATURES)
-print(rules_text)
+# ═════════════════════════════════════════════════════════════════
+# 10. LEAF DIAGNOSTICS
+# ═════════════════════════════════════════════════════════════════
+print("── 8. Leaf diagnostics ──────────────────")
 
-# ── Extract leaf-level rules as structured table ──────────────
-from sklearn.tree import _tree
+t_      = clf.tree_
+left_ch = t_.children_left
+rght_ch = t_.children_right
 
-def extract_rules(tree, feature_names):
-    """Walk the tree and extract one rule per leaf.
-    Uses tree_.children_left / children_right (sklearn's actual node arrays)
-    instead of the broken node*2+1 shortcut which assumes a perfect binary tree.
-    """
-    tree_   = tree.tree_
-    left    = tree_.children_left    # left child index for each node
-    right   = tree_.children_right   # right child index for each node
-    feature = tree_.feature          # split feature index (-2 = leaf)
-    threshold = tree_.threshold      # split threshold
-    value   = tree_.value            # sample counts [node, 1, n_classes]
-    rules   = []
+leaf_rates_list = []
+for nid in range(t_.node_count):
+    if left_ch[nid] == _tree.TREE_LEAF:
+        cnts  = t_.value[nid][0]
+        total = int(cnts.sum())
+        c1    = int(cnts[1]) if len(cnts) > 1 else 0
+        rate  = c1 / total if total > 0 else 0.0
+        leaf_rates_list.append(rate)
+        tag = ">>> AUTO-APPROVE" if rate >= APPROVAL_THRESHOLD else "    manual review"
+        print(f"   node {nid:>3}  n={total:>6,}  fp={c1:>6,}  "
+              f"rate={rate:.1%}  {tag}")
 
-    def recurse(node, conditions):
+max_leaf_rate = max(leaf_rates_list) if leaf_rates_list else 0.0
+print(f"\n   Max leaf rate      : {max_leaf_rate:.1%}")
+print(f"   APPROVAL_THRESHOLD : {APPROVAL_THRESHOLD:.1%}")
+
+eff_threshold = APPROVAL_THRESHOLD
+if max_leaf_rate < APPROVAL_THRESHOLD:
+    eff_threshold = round(max_leaf_rate - 0.005, 3)
+    print(f"\n   No leaf met {APPROVAL_THRESHOLD:.0%} — auto-adjusted to {eff_threshold:.1%}")
+    print(f"   To set manually: change APPROVAL_THRESHOLD at top of script")
+
+# ═════════════════════════════════════════════════════════════════
+# 11. EXTRACT RULES FROM LEAVES
+# ═════════════════════════════════════════════════════════════════
+def extract_rules(clf, feature_names, threshold):
+    """Walk tree via children_left/right — never node*2+1."""
+    t_      = clf.tree_
+    left    = t_.children_left
+    right   = t_.children_right
+    feature = t_.feature
+    splits  = t_.threshold
+    vals    = t_.value
+    rows    = []
+
+    def walk(node, path):
         if left[node] == _tree.TREE_LEAF:
-            # leaf node — record the rule
-            counts     = value[node][0]
-            total      = int(counts.sum())
-            class_1    = int(counts[1]) if len(counts) > 1 else 0
-            approval_r = class_1 / total if total > 0 else 0
-            rules.append({
-                "conditions"   : " AND ".join(conditions) if conditions else "ALL",
-                "samples"      : total,
-                "first_pass_n" : class_1,
-                "approval_rate" : round(approval_r * 100, 1),
-                "prediction"   : 1 if approval_r >= APPROVAL_THRESHOLD else 0,
-                "leaf_node"    : node,
+            cnts  = vals[node][0]
+            total = int(cnts.sum())
+            c1    = int(cnts[1]) if len(cnts) > 1 else 0
+            rate  = c1 / total if total > 0 else 0.0
+            rows.append({
+                "rule_conditions"  : "\n  AND ".join(path) if path else "ALL",
+                "samples"          : total,
+                "first_pass_n"     : c1,
+                "approval_rate_pct": round(rate * 100, 1),
+                "prediction"       : 1 if rate >= threshold else 0,
+                "action"           : "AUTO-APPROVE" if rate >= threshold
+                                     else "MANUAL REVIEW",
             })
         else:
-            fname  = feature_names[feature[node]]
-            thresh = round(float(threshold[node]), 4)
-            recurse(left[node],  conditions + [f"{fname} <= {thresh}"])
-            recurse(right[node], conditions + [f"{fname} >  {thresh}"])
+            fname = feature_names[feature[node]]
+            thr   = round(float(splits[node]), 4)
+            walk(left[node],  path + [f"{fname} <= {thr}"])
+            walk(right[node], path + [f"{fname} >  {thr}"])
 
-    recurse(0, [])
-    return pd.DataFrame(rules)
-
-# ── Diagnose actual leaf probabilities before extracting rules ─
-print("\n── Leaf node diagnostics ────────────────")
-tree_     = clf.tree_
-leaf_rates = []
-for nid in range(tree_.node_count):
-    if tree_.children_left[nid] == _tree.TREE_LEAF:
-        counts = tree_.value[nid][0]
-        total  = int(counts.sum())
-        c1     = int(counts[1]) if len(counts) > 1 else 0
-        rate   = c1 / total if total > 0 else 0
-        leaf_rates.append(rate)
-        tag = ">>> AUTO-APPROVE" if rate >= APPROVAL_THRESHOLD else "    manual review"
-        print(f"   node {nid:>3}  samples={total:>6,}  "
-              f"first_pass={c1:>6,}  rate={rate:.1%}  {tag}")
-
-max_leaf_rate = max(leaf_rates) if leaf_rates else 0
-print(f"\n   Highest leaf rate   : {max_leaf_rate:.1%}")
-print(f"   APPROVAL_THRESHOLD  : {APPROVAL_THRESHOLD:.1%}")
-
-# Auto-adjust if no leaf qualifies — set just below the best leaf
-if max_leaf_rate < APPROVAL_THRESHOLD:
-    APPROVAL_THRESHOLD = round(max_leaf_rate - 0.005, 3)
-    print(f"\n   *** No leaf met threshold — auto-adjusted to {APPROVAL_THRESHOLD:.1%}")
-    print(f"   *** Review leaf rates above and set APPROVAL_THRESHOLD manually at top.")
-
-rules_df = extract_rules(clf, FEATURES)
-rules_df = rules_df.sort_values("approval_rate", ascending=False)
-
-print("\n── Leaf rules sorted by approval rate ───")
-print(rules_df[["conditions","samples","approval_rate","prediction"]].to_string(index=False))
-
-# Separate auto-approve vs reject leaves
-auto_approve_rules = rules_df[rules_df["prediction"] == 1].reset_index(drop=True)
-reject_rules       = rules_df[rules_df["prediction"] == 0].reset_index(drop=True)
-
-print(f"\n   AUTO-APPROVE leaves : {len(auto_approve_rules)}")
-print(f"   REJECT leaves       : {len(reject_rules)}")
-
-print("\n══════════════════════════════════════════")
-print("   FINAL AUTO-APPROVAL RULES")
-print("══════════════════════════════════════════")
-for i, row in auto_approve_rules.iterrows():
-    print(f"\n   Rule {i+1}  (approval rate: {row['approval_rate']}%  |  samples: {row['samples']:,})")
-    print(f"   IF  {row['conditions']}")
-    print(f"   → AUTO-APPROVE")
-print("══════════════════════════════════════════\n")
+    walk(0, [])
+    return (
+        pd.DataFrame(rows)
+        .sort_values("approval_rate_pct", ascending=False)
+        .reset_index(drop=True)
+    )
 
 
-# ════════════════════════════════════════════════════════════════
-# 10.  CHARTS
-# ════════════════════════════════════════════════════════════════
+rules_df = extract_rules(clf, FEATURES, eff_threshold)
+auto_df  = rules_df[rules_df["prediction"] == 1].reset_index(drop=True)
+hold_df  = rules_df[rules_df["prediction"] == 0].reset_index(drop=True)
+
+print(f"\n   AUTO-APPROVE leaves : {len(auto_df)}")
+print(f"   MANUAL REVIEW leaves: {len(hold_df)}")
+
+print("\n── All leaves sorted by approval rate ───")
+for _, row in rules_df.iterrows():
+    print(f"\n   [{row['action']}]  rate={row['approval_rate_pct']}%  "
+          f"n={row['samples']:,}")
+    for line in row["rule_conditions"].split("\n"):
+        print(f"     {line}")
+
+# ═════════════════════════════════════════════════════════════════
+# 12. FINAL RULES PRINT
+# ═════════════════════════════════════════════════════════════════
+sep = "=" * 64
+print(f"\n{sep}")
+print("   DECISION TREE  —  FINAL AUTO-APPROVAL RULES")
+print(sep)
+print(f"\n   Model     : DecisionTree depth={best_depth} "
+      f"min_leaf={MIN_LEAF} threshold={eff_threshold:.0%}")
+print(f"   Precision : {best['precision']:.1%}   "
+      f"Recall : {best['recall']:.1%}   F1 : {best['f1']:.3f}\n")
+
+if len(auto_df) == 0:
+    print("   No leaves exceeded the approval threshold.")
+    print(f"   Best leaf rate found: {max_leaf_rate:.1%}")
+    print(f"   Suggestion: set APPROVAL_THRESHOLD = {round(max_leaf_rate-0.02,2):.0%}"
+          f" to get {round(max_leaf_rate-0.02,0):.0%}+ auto-approval leaves.")
+else:
+    for i, row in auto_df.iterrows():
+        bar = "─" * 56
+        print(f"   Rule {i+1}  |  approval rate: {row['approval_rate_pct']}%"
+              f"  |  estimates: {row['samples']:,}")
+        print(f"   {bar}")
+        print(f"   IF:")
+        for cond in row["rule_conditions"].split("\n"):
+            print(f"      {cond.strip()}")
+        print(f"   THEN: AUTO-APPROVE")
+        print(f"   {bar}\n")
+
+print("   All other estimates  →  MANUAL REVIEW")
+print(f"{sep}\n")
+
+# ═════════════════════════════════════════════════════════════════
+# 13. CHARTS
+# ═════════════════════════════════════════════════════════════════
 print("── 9. Generating charts ─────────────────")
 
-# ── Chart 1: Feature Importance ──────────────────────────────
+# 1 — Feature importance
 fig, ax = plt.subplots(figsize=(9, 4.5))
-fig.patch.set_facecolor("#0d1117")
-ax.set_facecolor("#161b22")
-
-colors = [GOLD if i == 0 else BLUE for i in range(len(fi))]
-bars = ax.barh(fi["feature"][::-1], fi["importance"][::-1] * 100,
-               color=colors[::-1], height=0.6, edgecolor="none")
-
-for bar, val in zip(bars, fi["importance"][::-1] * 100):
-    ax.text(val + 0.3, bar.get_y() + bar.get_height()/2,
-            f"{val:.1f}%", va="center", ha="left", fontsize=9, color=WHITE)
-
-ax.set_xlabel("Feature importance (%)", color=MUTED, fontsize=10)
-ax.set_title("Feature importance — decision tree", color=WHITE, fontsize=12, pad=12)
-ax.grid(axis="x", color="#2a3444", linestyle="--", alpha=0.5)
-ax.tick_params(axis="y", labelsize=10, labelcolor=WHITE)
-ax.spines[:].set_visible(False)
-ax.set_xlim(0, fi["importance"].max() * 110)
+clrs = [GOLD if i == 0 else BLUE for i in range(len(fi))]
+bars = ax.barh(fi["feature"][::-1], fi["importance"][::-1]*100,
+               color=clrs[::-1], height=0.6, edgecolor="none")
+for b, v in zip(bars, fi["importance"][::-1]*100):
+    ax.text(v+0.3, b.get_y()+b.get_height()/2,
+            f"{v:.1f}%", va="center", ha="left", fontsize=9, color=WHITE)
+ax.set_xlabel("Importance (%)", color=MUTED)
+ax.set_title("Feature importance", color=WHITE, fontsize=12, pad=10)
+ax.set_xlim(0, fi["importance"].max()*118)
+ax.grid(axis="x"); ax.spines[:].set_visible(False)
 plt.tight_layout(pad=1.5)
-plt.savefig(f"{OUTPUT_DIR}/01_feature_importance.png", dpi=130, bbox_inches="tight",
-            facecolor="#0d1117")
+plt.savefig(f"{OUTPUT_DIR}/01_feature_importance.png",
+            bbox_inches="tight", facecolor="#0d1117")
 plt.close()
-print("   Saved: 01_feature_importance.png")
+print("   01_feature_importance.png")
 
-
-# ── Chart 2: Depth Comparison ────────────────────────────────
+# 2 — Depth comparison
 fig, ax = plt.subplots(figsize=(8, 4))
-fig.patch.set_facecolor("#0d1117")
-ax.set_facecolor("#161b22")
-
-depths  = list(results_by_depth.keys())
-metrics = ["precision", "recall", "f1", "auc"]
-colors_m = [GREEN, GOLD, BLUE, AMBER]
-x = np.arange(len(depths))
-w = 0.2
-
-for i, (m, c) in enumerate(zip(metrics, colors_m)):
-    vals = [results_by_depth[d][m] for d in depths]
-    bars = ax.bar(x + i*w, [v*100 for v in vals], w, label=m.upper(),
+mets = ["precision","recall","f1","auc"]
+cols_m = [GREEN, GOLD, BLUE, AMBER]
+xp = np.arange(3); w = 0.2
+for i, (m, c) in enumerate(zip(mets, cols_m)):
+    vals = [results[d][m]*100 for d in [3,4,5]]
+    bs   = ax.bar(xp+i*w, vals, w, label=m.upper(),
                   color=c, alpha=0.85, edgecolor="none")
-    for bar, val in zip(bars, vals):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                f"{val*100:.1f}", ha="center", va="bottom", fontsize=8, color=c)
-
-ax.set_xticks(x + w*1.5)
-ax.set_xticklabels([f"Depth {d}" for d in depths], fontsize=10)
-ax.set_ylabel("Score (%)", color=MUTED)
-ax.set_title("Performance by tree depth", color=WHITE, fontsize=12, pad=12)
-ax.set_ylim(0, 105)
+    for b, v in zip(bs, vals):
+        ax.text(b.get_x()+b.get_width()/2, b.get_height()+0.5,
+                f"{v:.0f}", ha="center", va="bottom", fontsize=8, color=c)
+ax.set_xticks(xp+w*1.5)
+ax.set_xticklabels([f"Depth {d}" for d in [3,4,5]])
+ax.set_ylim(0, 110); ax.set_ylabel("Score (%)", color=MUTED)
+ax.set_title("Performance by tree depth", color=WHITE, fontsize=12, pad=10)
 ax.legend(frameon=False, labelcolor=WHITE, fontsize=9)
-ax.grid(axis="y", color="#2a3444", linestyle="--", alpha=0.5)
-ax.spines[:].set_visible(False)
-ax.axvline(x=depths.index(best_depth) + w*1.5, color=GOLD, linestyle="--",
-           alpha=0.4, linewidth=1)
-ax.text(depths.index(best_depth) + w*1.5 + 0.05, 100,
-        "  selected", color=GOLD, fontsize=9)
+ax.axvline([3,4,5].index(best_depth)+w*1.5,
+           color=GOLD, linestyle="--", alpha=0.4, lw=1.5)
+ax.grid(axis="y"); ax.spines[:].set_visible(False)
 plt.tight_layout(pad=1.5)
-plt.savefig(f"{OUTPUT_DIR}/02_depth_comparison.png", dpi=130, bbox_inches="tight",
-            facecolor="#0d1117")
+plt.savefig(f"{OUTPUT_DIR}/02_depth_comparison.png",
+            bbox_inches="tight", facecolor="#0d1117")
 plt.close()
-print("   Saved: 02_depth_comparison.png")
+print("   02_depth_comparison.png")
 
-
-# ── Chart 3: Confusion Matrix ────────────────────────────────
+# 3 — Confusion matrix
 fig, ax = plt.subplots(figsize=(5.5, 4.5))
-fig.patch.set_facecolor("#0d1117")
-ax.set_facecolor("#161b22")
-
-cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)
-cmap    = LinearSegmentedColormap.from_list("custom", ["#161b22", "#e0a84b"])
-im      = ax.imshow(cm_norm, cmap=cmap, aspect="auto")
-
-labels   = [["TN", "FP"], ["FN", "TP"]]
+cmap    = LinearSegmentedColormap.from_list("c", ["#161b22", GOLD])
+cm_n    = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+ax.imshow(cm_n, cmap=cmap, aspect="auto")
 for i in range(2):
     for j in range(2):
-        color = WHITE if cm_norm[i,j] < 0.5 else "#0d1117"
-        ax.text(j, i, f"{labels[i][j]}\n{cm[i,j]:,}\n({cm_norm[i,j]:.1%})",
-                ha="center", va="center", fontsize=11, color=color, fontweight="bold")
-
+        lbl = [["TN","FP"],["FN","TP"]][i][j]
+        col = WHITE if cm_n[i,j] < 0.5 else "#0d1117"
+        ax.text(j, i, f"{lbl}\n{cm[i,j]:,}\n({cm_n[i,j]:.1%})",
+                ha="center", va="center", fontsize=11,
+                color=col, fontweight="bold")
 ax.set_xticks([0,1]); ax.set_yticks([0,1])
-ax.set_xticklabels(["Predicted: No auto", "Predicted: Auto"], fontsize=9)
-ax.set_yticklabels(["Actual: Revised", "Actual: First-pass"], fontsize=9)
-ax.set_title(f"Confusion matrix — depth {best_depth} tree (test set)", color=WHITE, fontsize=11, pad=12)
+ax.set_xticklabels(["Pred: Hold","Pred: Auto-approve"], fontsize=9)
+ax.set_yticklabels(["Actual: Revised","Actual: First-pass"], fontsize=9)
+ax.set_title(f"Confusion matrix — depth {best_depth}", color=WHITE, pad=10)
 ax.spines[:].set_visible(False)
 plt.tight_layout(pad=1.5)
-plt.savefig(f"{OUTPUT_DIR}/03_confusion_matrix.png", dpi=130, bbox_inches="tight",
-            facecolor="#0d1117")
+plt.savefig(f"{OUTPUT_DIR}/03_confusion_matrix.png",
+            bbox_inches="tight", facecolor="#0d1117")
 plt.close()
-print("   Saved: 03_confusion_matrix.png")
+print("   03_confusion_matrix.png")
 
-
-# ── Chart 4: ROC Curve ──────────────────────────────────────
+# 4 — ROC
 fig, ax = plt.subplots(figsize=(6, 5))
-fig.patch.set_facecolor("#0d1117")
-ax.set_facecolor("#161b22")
-
-fpr, tpr, _ = roc_curve(y_test, y_prob)
-ax.plot(fpr, tpr, color=GOLD, linewidth=2,
-        label=f"Decision Tree (AUC = {best['auc']:.3f})")
-ax.plot([0,1], [0,1], color=MUTED, linestyle="--", linewidth=1, label="Random (AUC = 0.500)")
-ax.fill_between(fpr, tpr, alpha=0.08, color=GOLD)
-
-ax.set_xlabel("False Positive Rate", color=MUTED, fontsize=10)
-ax.set_ylabel("True Positive Rate", color=MUTED, fontsize=10)
-ax.set_title("ROC Curve", color=WHITE, fontsize=12, pad=12)
+fpr, tpr, _ = roc_curve(y_te, best["prob"])
+ax.plot(fpr, tpr, color=GOLD, lw=2,
+        label=f"Decision Tree  AUC={best['auc']:.3f}")
+ax.plot([0,1],[0,1], color=MUTED, lw=1, linestyle="--",
+        label="Random  AUC=0.500")
+ax.fill_between(fpr, tpr, alpha=0.07, color=GOLD)
+ax.set_xlabel("False Positive Rate", color=MUTED)
+ax.set_ylabel("True Positive Rate", color=MUTED)
+ax.set_title("ROC Curve", color=WHITE, fontsize=12, pad=10)
 ax.legend(frameon=False, labelcolor=WHITE, fontsize=10)
-ax.grid(color="#2a3444", linestyle="--", alpha=0.5)
-ax.spines[:].set_visible(False)
+ax.grid(); ax.spines[:].set_visible(False)
 ax.set_xlim(-0.02, 1.02); ax.set_ylim(-0.02, 1.02)
 plt.tight_layout(pad=1.5)
-plt.savefig(f"{OUTPUT_DIR}/04_roc_curve.png", dpi=130, bbox_inches="tight",
-            facecolor="#0d1117")
+plt.savefig(f"{OUTPUT_DIR}/04_roc_curve.png",
+            bbox_inches="tight", facecolor="#0d1117")
 plt.close()
-print("   Saved: 04_roc_curve.png")
+print("   04_roc_curve.png")
 
-
-# ── Chart 5: Precision-Recall Curve ─────────────────────────
+# 5 — Precision-Recall
 fig, ax = plt.subplots(figsize=(6, 5))
-fig.patch.set_facecolor("#0d1117")
-ax.set_facecolor("#161b22")
-
-prec_c, rec_c, thresholds = precision_recall_curve(y_test, y_prob)
-ax.plot(rec_c, prec_c, color=BLUE, linewidth=2)
-ax.fill_between(rec_c, prec_c, alpha=0.08, color=BLUE)
-ax.axhline(y=best["precision"], color=GOLD, linestyle="--", alpha=0.6, linewidth=1)
-ax.axvline(x=best["recall"],    color=GREEN, linestyle="--", alpha=0.6, linewidth=1)
-ax.scatter([best["recall"]], [best["precision"]], color=GOLD, zorder=5, s=60,
-           label=f"Operating point\n(P={best['precision']:.2f}, R={best['recall']:.2f})")
-
-ax.set_xlabel("Recall", color=MUTED, fontsize=10)
-ax.set_ylabel("Precision", color=MUTED, fontsize=10)
-ax.set_title("Precision–Recall Curve", color=WHITE, fontsize=12, pad=12)
+pc, rc, _ = precision_recall_curve(y_te, best["prob"])
+ax.plot(rc, pc, color=BLUE, lw=2)
+ax.fill_between(rc, pc, alpha=0.07, color=BLUE)
+ax.scatter([best["recall"]], [best["precision"]], color=GOLD, s=70, zorder=5,
+           label=f"P={best['precision']:.2f}  R={best['recall']:.2f}")
+ax.set_xlabel("Recall", color=MUTED)
+ax.set_ylabel("Precision", color=MUTED)
+ax.set_title("Precision-Recall Curve", color=WHITE, fontsize=12, pad=10)
 ax.legend(frameon=False, labelcolor=WHITE, fontsize=9)
-ax.grid(color="#2a3444", linestyle="--", alpha=0.5)
-ax.spines[:].set_visible(False)
+ax.grid(); ax.spines[:].set_visible(False)
 ax.set_xlim(-0.02, 1.02); ax.set_ylim(-0.02, 1.02)
 plt.tight_layout(pad=1.5)
-plt.savefig(f"{OUTPUT_DIR}/05_precision_recall.png", dpi=130, bbox_inches="tight",
-            facecolor="#0d1117")
+plt.savefig(f"{OUTPUT_DIR}/05_precision_recall.png",
+            bbox_inches="tight", facecolor="#0d1117")
 plt.close()
-print("   Saved: 05_precision_recall.png")
+print("   05_precision_recall.png")
 
-
-# ── Chart 6: Leaf approval rates ────────────────────────────
-fig, ax = plt.subplots(figsize=(10, max(4, len(rules_df) * 0.5 + 1.5)))
-fig.patch.set_facecolor("#0d1117")
-ax.set_facecolor("#161b22")
-
-sorted_rules = rules_df.sort_values("approval_rate")
-colors_bar   = [GREEN if p == 1 else RED for p in sorted_rules["prediction"]]
-short_labels = [f"Leaf {i+1}  ({row['samples']:,} est.)"
-                for i, (_, row) in enumerate(sorted_rules.iterrows())]
-
-bars = ax.barh(range(len(sorted_rules)), sorted_rules["approval_rate"],
-               color=colors_bar, height=0.65, edgecolor="none")
-
-for bar, val in zip(bars, sorted_rules["approval_rate"]):
-    ax.text(val + 0.5, bar.get_y() + bar.get_height()/2,
-            f"{val:.1f}%", va="center", ha="left", fontsize=9, color=WHITE)
-
-ax.set_yticks(range(len(sorted_rules)))
-ax.set_yticklabels(short_labels, fontsize=8)
-ax.set_xlabel("First-pass approval rate in leaf (%)", color=MUTED)
-ax.set_title(f"Approval rate per decision tree leaf — depth {best_depth}", color=WHITE,
-             fontsize=12, pad=12)
-ax.axvline(50, color=MUTED, linestyle="--", alpha=0.4, linewidth=1)
-ax.text(50.5, -0.6, "50% threshold", color=MUTED, fontsize=8)
+# 6 — Leaf approval rates
+fig, ax = plt.subplots(figsize=(10, max(4, len(rules_df)*0.55+1.5)))
+sr   = rules_df.sort_values("approval_rate_pct")
+clrs = [GREEN if p==1 else RED for p in sr["prediction"]]
+yl   = [f"Leaf {i+1}  (n={r['samples']:,})"
+        for i, (_,r) in enumerate(sr.iterrows())]
+bars = ax.barh(range(len(sr)), sr["approval_rate_pct"],
+               color=clrs, height=0.65, edgecolor="none")
+for b, v in zip(bars, sr["approval_rate_pct"]):
+    ax.text(v+0.5, b.get_y()+b.get_height()/2,
+            f"{v:.1f}%", va="center", ha="left", fontsize=9, color=WHITE)
+ax.set_yticks(range(len(sr))); ax.set_yticklabels(yl, fontsize=8)
+ax.set_xlabel("First-pass approval rate (%)", color=MUTED)
+ax.set_title(f"Approval rate per leaf — depth {best_depth} "
+             f"(threshold {eff_threshold:.0%})",
+             color=WHITE, fontsize=12, pad=10)
+ax.axvline(eff_threshold*100, color=MUTED, linestyle="--", alpha=0.5, lw=1)
+ax.text(eff_threshold*100+0.5, -0.6,
+        f"{eff_threshold:.0%}", color=MUTED, fontsize=8)
 ax.set_xlim(0, 110)
-ax.grid(axis="x", color="#2a3444", linestyle="--", alpha=0.5)
-ax.spines[:].set_visible(False)
-
-legend_patches = [
-    mpatches.Patch(color=GREEN, label="AUTO-APPROVE (prediction = 1)"),
-    mpatches.Patch(color=RED,   label="HOLD FOR REVIEW (prediction = 0)"),
-]
-ax.legend(handles=legend_patches, frameon=False, labelcolor=WHITE, fontsize=9,
-          loc="lower right")
+ax.legend(handles=[
+    mpatches.Patch(color=GREEN, label="AUTO-APPROVE"),
+    mpatches.Patch(color=RED,   label="MANUAL REVIEW"),
+], frameon=False, labelcolor=WHITE, fontsize=9, loc="lower right")
+ax.grid(axis="x"); ax.spines[:].set_visible(False)
 plt.tight_layout(pad=1.5)
-plt.savefig(f"{OUTPUT_DIR}/06_leaf_approval_rates.png", dpi=130, bbox_inches="tight",
-            facecolor="#0d1117")
+plt.savefig(f"{OUTPUT_DIR}/06_leaf_rates.png",
+            bbox_inches="tight", facecolor="#0d1117")
 plt.close()
-print("   Saved: 06_leaf_approval_rates.png")
+print("   06_leaf_rates.png")
 
+# 7 — Tree diagram
+fig, ax = plt.subplots(
+    figsize=(max(14, best_depth*5), max(7, best_depth*2.5))
+)
+plot_tree(clf, feature_names=FEATURES,
+          class_names=["Revised","First-pass"],
+          filled=True, rounded=True, fontsize=7,
+          impurity=False, proportion=True, ax=ax)
+ax.set_title(f"Decision tree structure — depth {best_depth}",
+             color=WHITE, fontsize=13, pad=12)
+plt.tight_layout(pad=1.5)
+plt.savefig(f"{OUTPUT_DIR}/07_tree_structure.png",
+            bbox_inches="tight", facecolor="#0d1117")
+plt.close()
+print("   07_tree_structure.png")
 
-# ── Chart 7: Tree visualisation ──────────────────────────────
-try:
-    from sklearn.tree import plot_tree
-    fig, ax = plt.subplots(figsize=(max(14, best_depth * 5), max(7, best_depth * 2.5)))
-    fig.patch.set_facecolor("#0d1117")
-    ax.set_facecolor("#0d1117")
-    plot_tree(
-        clf, feature_names=FEATURES,
-        class_names=["Revised", "First-pass"],
-        filled=True, rounded=True, fontsize=7,
-        impurity=False, proportion=True, ax=ax
-    )
-    ax.set_title(f"Decision tree structure — depth {best_depth}", color=WHITE,
-                 fontsize=13, pad=14)
-    plt.tight_layout(pad=1.5)
-    plt.savefig(f"{OUTPUT_DIR}/07_tree_structure.png", dpi=110, bbox_inches="tight",
-                facecolor="#0d1117")
-    plt.close()
-    print("   Saved: 07_tree_structure.png")
-except Exception as e:
-    print(f"   Tree viz skipped: {e}")
+# ═════════════════════════════════════════════════════════════════
+# 14. FULL DATA PREDICTIONS
+# ═════════════════════════════════════════════════════════════════
+print("\n── 10. Full dataset predictions ─────────")
+full_prob = clf.predict_proba(X)[:, 1]
+full_pred = (full_prob >= eff_threshold).astype(int)
+model_df  = model_df.copy()
+model_df["dt_probability"] = full_prob.round(4)
+model_df["dt_prediction"]  = full_pred
+model_df["outcome"] = "TN"
+model_df.loc[(full_pred==1)&(y==1), "outcome"] = "TP"
+model_df.loc[(full_pred==1)&(y==0), "outcome"] = "FP"
+model_df.loc[(full_pred==0)&(y==1), "outcome"] = "FN"
+fp_p = precision_score(y, full_pred, zero_division=0)
+fp_r = recall_score(y, full_pred,    zero_division=0)
+print(f"   Precision={fp_p:.1%}  Recall={fp_r:.1%}  "
+      f"Auto-approved={full_pred.sum():,} ({full_pred.mean():.1%})")
 
+# ═════════════════════════════════════════════════════════════════
+# 15. EXPORT EXCEL
+# ═════════════════════════════════════════════════════════════════
+print(f"\n── 11. Excel -> {EXCEL_PATH} ─────────────")
 
-# ════════════════════════════════════════════════════════════════
-# 11.  APPLY TREE PREDICTIONS TO FULL DATASET
-# ════════════════════════════════════════════════════════════════
-print("\n── 10. Applying model to full dataset ───")
-
-full_X = model_df[FEATURES].values
-model_df = model_df.copy()
-model_df["dt_prediction"]   = (clf.predict_proba(full_X)[:, 1] >= APPROVAL_THRESHOLD).astype(int)
-model_df["dt_probability"]  = clf.predict_proba(full_X)[:, 1]
-
-full_prec = precision_score(model_df["first_pass"], model_df["dt_prediction"])
-full_rec  = recall_score(model_df["first_pass"],    model_df["dt_prediction"])
-full_acc  = accuracy_score(model_df["first_pass"],  model_df["dt_prediction"])
-print(f"   Full dataset — Precision: {full_prec:.1%}  Recall: {full_rec:.1%}  Accuracy: {full_acc:.1%}")
-print(f"   Auto-approved by model : {model_df['dt_prediction'].sum():,}  "
-      f"({model_df['dt_prediction'].mean():.1%})")
-
-
-# ════════════════════════════════════════════════════════════════
-# 12.  EXPORT TO EXCEL
-# ════════════════════════════════════════════════════════════════
-print(f"\n── 11. Writing Excel → {EXCEL_PATH} ─────")
-
-metrics_df = pd.DataFrame({
-    "Metric": [
-        "Best tree depth",
-        "Test set — Accuracy",
-        "Test set — Precision",
-        "Test set — Recall",
-        "Test set — F1",
-        "Test set — ROC AUC",
-        "5-fold CV F1",
-        "TP (correct auto-approvals)",
-        "FP (wrong auto-approvals)",
-        "TN (correctly held back)",
-        "FN (missed auto-approvals)",
-        "Full dataset auto-approved",
-        "Full dataset auto-approved %",
-    ],
-    "Value": [
-        best_depth,
-        f"{best['accuracy']:.1%}",
-        f"{best['precision']:.1%}",
-        f"{best['recall']:.1%}",
-        f"{best['f1']:.3f}",
-        f"{best['auc']:.3f}",
-        f"{best['cv_f1']:.3f}",
-        TP, FP, TN, FN,
-        int(model_df["dt_prediction"].sum()),
-        f"{model_df['dt_prediction'].mean():.1%}",
-    ]
+metrics_out = pd.DataFrame({
+    "Metric": ["Best depth","Threshold","Precision","Recall","F1",
+               "AUC","CV F1","TP","FP","TN","FN",
+               "Full data auto-approved","Full data auto-approved %"],
+    "Value":  [best_depth, f"{eff_threshold:.0%}",
+               f"{best['precision']:.1%}", f"{best['recall']:.1%}",
+               f"{best['f1']:.3f}", f"{best['auc']:.3f}",
+               f"{best['cv_f1']:.3f}",
+               TP, FP, TN, FN,
+               int(full_pred.sum()), f"{full_pred.mean():.1%}"]
 })
-
-depth_df = pd.DataFrame([
-    {
-        "depth"     : d,
-        "precision" : f"{r['precision']:.1%}",
-        "recall"    : f"{r['recall']:.1%}",
-        "f1"        : f"{r['f1']:.3f}",
-        "auc"       : f"{r['auc']:.3f}",
-        "cv_f1"     : f"{r['cv_f1']:.3f}",
-        "selected"  : "YES" if d == best_depth else "",
-    }
-    for d, r in results_by_depth.items()
+depth_out = pd.DataFrame([
+    {"depth": d,
+     "precision": f"{r['precision']:.1%}", "recall": f"{r['recall']:.1%}",
+     "f1":        f"{r['f1']:.3f}",        "auc":    f"{r['auc']:.3f}",
+     "cv_f1":     f"{r['cv_f1']:.3f}",
+     "selected":  "YES" if d == best_depth else ""}
+    for d, r in results.items()
 ])
-
-rules_export = rules_df[[
-    "conditions", "samples", "first_pass_n", "approval_rate", "prediction"
-]].copy()
-rules_export["action"] = rules_export["prediction"].map(
-    {1: "AUTO-APPROVE", 0: "MANUAL REVIEW"}
+rules_out = rules_df[["rule_conditions","samples","first_pass_n",
+                       "approval_rate_pct","action"]].copy()
+auto_out  = (
+    auto_df[["rule_conditions","samples","first_pass_n","approval_rate_pct"]]
+    if len(auto_df) > 0
+    else pd.DataFrame({"note": ["No leaves met threshold — lower APPROVAL_THRESHOLD"]})
 )
 
-with pd.ExcelWriter(EXCEL_PATH, engine="openpyxl") as writer:
-    metrics_df.to_excel(writer, sheet_name="Metrics", index=False)
-    depth_df.to_excel(writer, sheet_name="Depth_Comparison", index=False)
-    fi.to_excel(writer, sheet_name="Feature_Importance", index=False)
-    rules_export.to_excel(writer, sheet_name="All_Leaf_Rules", index=False)
-    auto_approve_rules[["conditions","samples","approval_rate"]]\
-        .to_excel(writer, sheet_name="AutoApprove_Rules", index=False)
-    model_df.to_excel(writer, sheet_name="Full_Data_Predictions", index=False)
+with pd.ExcelWriter(EXCEL_PATH, engine="openpyxl") as w:
+    metrics_out.to_excel(w, sheet_name="Metrics",             index=False)
+    depth_out.to_excel(  w, sheet_name="Depth_Comparison",    index=False)
+    fi.to_excel(         w, sheet_name="Feature_Importance",   index=False)
+    rules_out.to_excel(  w, sheet_name="All_Leaf_Rules",       index=False)
+    auto_out.to_excel(   w, sheet_name="AutoApprove_Rules",    index=False)
+    model_df.to_excel(   w, sheet_name="Full_Data_Predictions",index=False)
 
-print(f"   Sheets: Metrics, Depth_Comparison, Feature_Importance,")
-print(f"           All_Leaf_Rules, AutoApprove_Rules, Full_Data_Predictions")
-
-
-# ════════════════════════════════════════════════════════════════
-# 13.  PRINT FINAL CLEAN RULES SUMMARY
-# ════════════════════════════════════════════════════════════════
-print("""
-╔══════════════════════════════════════════════════════════════╗
-║              DECISION TREE — FINAL RULES SUMMARY            ║
-╚══════════════════════════════════════════════════════════════╝
-""")
-print(f"  Model     : Decision Tree, max_depth={best_depth}, min_samples_leaf=150")
-print(f"  Target    : first_pass = 1 (rvsn_nbr == 1)")
-print(f"  Precision : {best['precision']:.1%}   Recall : {best['recall']:.1%}")
-print(f"  F1        : {best['f1']:.3f}      AUC    : {best['auc']:.3f}")
-print()
-print("  ── AUTO-APPROVE rules (prediction = 1) ──────────────")
-for i, row in auto_approve_rules.iterrows():
-    print(f"""
-  Rule {i+1}
-  ┌─ Condition ──────────────────────────────────────────────
-  │  {row['conditions'].replace(' AND ', chr(10) + '  │  AND ')}
-  ├─ Performance ────────────────────────────────────────────
-  │  Approval rate : {row['approval_rate']}%
-  │  Estimates     : {row['samples']:,}
-  └─ Action ─────────────────────────────────────────────────
-     → AUTO-APPROVE""")
-
-print("""
-  ── MANUAL REVIEW rules (prediction = 0) ──────────────────
-  All estimates NOT matching the above rules → MANUAL REVIEW
-""")
-print("  Charts saved to:", OUTPUT_DIR)
-print("  Excel  saved to:", EXCEL_PATH)
+print("   Done — 6 sheets written.")
+print(f"\nCharts : ./{OUTPUT_DIR}/")
+print(f"Excel  : {EXCEL_PATH}")
 print()
