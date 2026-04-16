@@ -1,9 +1,7 @@
-how can i create this in excel negative_or_null_est_ind
-
-4:10 PM
-negative_or_null_est_ind flags estimates where the total amount is zero, negative, or missing. In Excel it's a simple formula checking est_tot_amt.
-
-Assuming est_tot_amt is in column G, in a new column put:
-
-excel
-=IF(OR(G2<0, G2=0, G2="", ISBLANK(G2)), 1, 0)
+=IF(OR(G2<0, G2=0, ISBLANK(G2)), "negative_or_null",
+ IF(G2<=250,  "$0–250",
+ IF(G2<=500,  "$251–500",
+ IF(G2<=750,  "$501–750",
+ IF(G2<=1000, "$751–1k",
+ IF(G2<=1500, "$1k–1.5k",
+ IF(G2<=2500, "$1.5k–2.5k", "$2.5k+")))))))
