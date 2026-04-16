@@ -126,11 +126,28 @@ CANDIDATES = [
 FEATURES = [f for f in CANDIDATES if f in df.columns]
 
 model_df = df[FEATURES + ["first_pass"]].dropna().reset_index(drop=True)
+
+# Force all features to float64 — CRITICAL
+# If any column is object/string dtype the tree ignores min_samples_leaf
+# and splits to n=1 leaves (which is exactly what happened).
+print("\n   Dtypes before coercion:")
+for f in FEATURES:
+    print(f"   {f:<30} {model_df[f].dtype}")
+
+for f in FEATURES:
+    model_df[f] = pd.to_numeric(model_df[f], errors="coerce")
+model_df = model_df.dropna().reset_index(drop=True)
+
+print("\n   Dtypes after coercion (must all be float64 or int64):")
+for f in FEATURES:
+    print(f"   {f:<30} {model_df[f].dtype}")
+
 print(f"\n   Features  : {FEATURES}")
 print(f"   Model rows: {len(model_df):,}")
+print(f"   MIN_LEAF={MIN_LEAF} — max leaves expected ~{int(len(model_df)*0.75/MIN_LEAF*2)}")
 
-X = model_df[FEATURES].values
-y = model_df["first_pass"].values
+X = model_df[FEATURES].values.astype(np.float64)
+y = model_df["first_pass"].values.astype(int)
 
 # ═════════════════════════════════════════════════════════════════
 # 5. TRAIN / TEST SPLIT
