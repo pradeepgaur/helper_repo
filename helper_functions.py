@@ -301,6 +301,31 @@ def extract_rules(tree, feature_names):
     recurse(0, [])
     return pd.DataFrame(rules)
 
+# ── Diagnose actual leaf probabilities before extracting rules ─
+print("\n── Leaf node diagnostics ────────────────")
+tree_     = clf.tree_
+leaf_rates = []
+for nid in range(tree_.node_count):
+    if tree_.children_left[nid] == _tree.TREE_LEAF:
+        counts = tree_.value[nid][0]
+        total  = int(counts.sum())
+        c1     = int(counts[1]) if len(counts) > 1 else 0
+        rate   = c1 / total if total > 0 else 0
+        leaf_rates.append(rate)
+        tag = ">>> AUTO-APPROVE" if rate >= APPROVAL_THRESHOLD else "    manual review"
+        print(f"   node {nid:>3}  samples={total:>6,}  "
+              f"first_pass={c1:>6,}  rate={rate:.1%}  {tag}")
+
+max_leaf_rate = max(leaf_rates) if leaf_rates else 0
+print(f"\n   Highest leaf rate   : {max_leaf_rate:.1%}")
+print(f"   APPROVAL_THRESHOLD  : {APPROVAL_THRESHOLD:.1%}")
+
+# Auto-adjust if no leaf qualifies — set just below the best leaf
+if max_leaf_rate < APPROVAL_THRESHOLD:
+    APPROVAL_THRESHOLD = round(max_leaf_rate - 0.005, 3)
+    print(f"\n   *** No leaf met threshold — auto-adjusted to {APPROVAL_THRESHOLD:.1%}")
+    print(f"   *** Review leaf rates above and set APPROVAL_THRESHOLD manually at top.")
+
 rules_df = extract_rules(clf, FEATURES)
 rules_df = rules_df.sort_values("approval_rate", ascending=False)
 
