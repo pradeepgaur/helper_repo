@@ -1,12 +1,12 @@
 """
-Add vendor_tier_trusted column to original Excel file.
+Add vendor_tier column (all 4 categories) to original Excel file.
 
-Steps:
-  1. Reads your Excel file
-  2. Computes per-vendor approval rate from rvsn_nbr
-  3. Classifies each vendor as trusted (top quartile) or not
-  4. Adds vendor_tier_trusted column (values: "trusted" / "not_trusted" / "insufficient_history")
-  5. Saves as a new Excel file
+Tiers:
+  trusted             — top 25% of vendors by first-pass approval rate
+  above_avg           — 50th–75th percentile
+  below_avg           — 25th–50th percentile
+  low                 — bottom 25%
+  insufficient_history— fewer than VENDOR_MIN_ESTIMATES estimates
 
 Update INPUT_PATH and OUTPUT_PATH below before running.
 """
@@ -15,17 +15,17 @@ import pandas as pd
 import numpy as np
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-INPUT_PATH  = "your_input_file.xlsx"      # ← your original Excel file
-OUTPUT_PATH = "output_with_vendor_tier.xlsx"  # ← where to save the result
-SHEET_NAME  = 0                           # ← 0 = first sheet, or use sheet name e.g. "Sheet1"
-VENDOR_MIN_ESTIMATES = 10                 # minimum estimates before a vendor can be "trusted"
+INPUT_PATH  = "your_input_file.xlsx"         # ← your original Excel file
+OUTPUT_PATH = "output_with_vendor_tier.xlsx" # ← where to save the result
+SHEET_NAME  = 0                              # ← 0 = first sheet, or "Sheet1" etc.
+VENDOR_MIN_ESTIMATES = 10                    # minimum estimates to qualify for tiering
 # ─────────────────────────────────────────────────────────────────────────────
 
 print(f"Reading: {INPUT_PATH}")
-df = pd.read_excel(INPUT_PATH, sheet_name=SHEET_NAME)
+df = pd.read_excel(INPUT_PATH, sheet_name=SHEET_NAME, engine="openpyxl")
 print(f"Loaded {len(df):,} rows, {df.shape[1]} columns")
 
-# ── Step 1: build first_pass label from rvsn_nbr ─────────────────────────────
+# ── Step 1: build first_pass label ───────────────────────────────────────────
 df["_first_pass"] = (df["rvsn_nbr"] == 1).astype(int)
 
 # ── Step 2: compute per-vendor approval rate ──────────────────────────────────
@@ -35,38 +35,53 @@ vendor_stats = (
     .reset_index()
 )
 
-# ── Step 3: find the 75th percentile cutoff (trusted threshold) ───────────────
-eligible_rates = vendor_stats.loc[
-    vendor_stats["vendor_est_count"] >= VENDOR_MIN_ESTIMATES, "vendor_approval_rate"
-]
-trusted_cutoff = eligible_rates.quantile(0.75)
-print(f"Trusted threshold (75th percentile): {trusted_cutoff:.4f}  ({trusted_cutoff:.1%})")
+# ── Step 3: compute quartile cutoffs from eligible vendors only ───────────────
+eligible = vendor_stats["vendor_est_count"] >= VENDOR_MIN_ESTIMATES
+eligible_rates = vendor_stats.loc[eligible, "vendor_approval_rate"]
+
+q25 = eligible_rates.quantile(0.25)
+q50 = eligible_rates.quantile(0.50)
+q75 = eligible_rates.quantile(0.75)
+
+print(f"\nVendor approval rate quartile cutoffs:")
+print(f"  25th percentile (low / below_avg boundary)   : {q25:.4f}  ({q25:.1%})")
+print(f"  50th percentile (below_avg / above_avg boundary): {q50:.4f}  ({q50:.1%})")
+print(f"  75th percentile (above_avg / trusted boundary)  : {q75:.4f}  ({q75:.1%})")
 
 # ── Step 4: assign tier ───────────────────────────────────────────────────────
 def assign_tier(row):
     if row["vendor_est_count"] < VENDOR_MIN_ESTIMATES:
         return "insufficient_history"
-    return "trusted" if row["vendor_approval_rate"] >= trusted_cutoff else "not_trusted"
+    rate = row["vendor_approval_rate"]
+    if rate >= q75:
+        return "trusted"
+    elif rate >= q50:
+        return "above_avg"
+    elif rate >= q25:
+        return "below_avg"
+    else:
+        return "low"
 
-vendor_stats["vendor_tier_trusted"] = vendor_stats.apply(assign_tier, axis=1)
+vendor_stats["vendor_tier"] = vendor_stats.apply(assign_tier, axis=1)
 
-# ── Step 5: merge back into main dataframe ────────────────────────────────────
+# ── Step 5: merge back ────────────────────────────────────────────────────────
 df = df.merge(
-    vendor_stats[["vr_vndr_id", "vendor_tier_trusted"]],
+    vendor_stats[["vr_vndr_id", "vendor_approval_rate", "vendor_tier"]],
     on="vr_vndr_id",
     how="left"
 )
 
-# Drop the temporary helper column
 df.drop(columns=["_first_pass"], inplace=True)
 
 # ── Summary ───────────────────────────────────────────────────────────────────
-counts = df["vendor_tier_trusted"].value_counts()
-print("\nvendor_tier_trusted distribution:")
-for tier, cnt in counts.items():
-    print(f"  {tier:<25} {cnt:>6,}  ({cnt/len(df):.1%})")
+print(f"\nvendor_tier distribution:")
+tier_order = ["trusted", "above_avg", "below_avg", "low", "insufficient_history"]
+for tier in tier_order:
+    cnt = (df["vendor_tier"] == tier).sum()
+    avg = df.loc[df["vendor_tier"] == tier, "vendor_approval_rate"].mean()
+    print(f"  {tier:<25} {cnt:>6,} estimates   avg approval rate: {avg:.1%}")
 
 # ── Step 6: save ──────────────────────────────────────────────────────────────
 print(f"\nSaving to: {OUTPUT_PATH}")
-df.to_excel(OUTPUT_PATH, index=False)
+df.to_excel(OUTPUT_PATH, index=False, engine="openpyxl")
 print("Done.")
