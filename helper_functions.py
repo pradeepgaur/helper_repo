@@ -1073,23 +1073,30 @@ def update_all(cost_r, labor_r, line_r, acc_min, prior_min,
         yaxis=dict(showgrid=True, gridcolor=BORDER, zeroline=False,
                    tickfont=dict(size=9, family="IBM Plex Mono, monospace")))
 
-    # ── Chart 4: Est. amount box plot by damage type (sampled per group) ─────────
-    _fill = {EM_GREEN: "rgba(0,177,64,0.09)", RISK: "rgba(196,69,54,0.09)"}
-    _BOX_CAP = 300   # points per damage-type group — keeps JSON tiny
-    box_data = (filt.groupby("dmg_dsc", observed=True, group_keys=False)
-                    .apply(lambda g: g.sample(min(len(g), _BOX_CAP), random_state=42)))
+    # ── Chart 4: Box plot — pre-computed stats, zero raw rows sent to browser ─────
+    bstats = (filt.groupby(["dmg_dsc", "auto_approved"], observed=True)["est_tot_amt"]
+                  .describe(percentiles=[0.25, 0.5, 0.75])
+                  .reset_index())
+    bstats["iqr"]        = bstats["75%"] - bstats["25%"]
+    bstats["lowerfence"] = np.maximum(bstats["min"], bstats["25%"] - 1.5 * bstats["iqr"])
+    bstats["upperfence"] = np.minimum(bstats["max"], bstats["75%"] + 1.5 * bstats["iqr"])
+    _bfill  = {True: "rgba(0,177,64,0.09)", False: "rgba(196,69,54,0.09)"}
+    _bcolor = {True: EM_GREEN, False: RISK}
     fig_box = go.Figure()
-    for appr, color, name in [(True, EM_GREEN, "Approved"),
-                               (False, RISK,     "Declined / Pending")]:
-        sub = box_data[box_data["auto_approved"] == appr]
+    for appr, bname in [(True, "Approved"), (False, "Declined / Pending")]:
+        sub = bstats[bstats["auto_approved"] == appr]
         if sub.empty:
             continue
         fig_box.add_trace(go.Box(
-            x=sub["dmg_dsc"], y=sub["est_tot_amt"], name=name,
-            marker=dict(color=color, size=3, opacity=0.6),
-            line=dict(color=color, width=1.5),
-            fillcolor=_fill[color], boxmean=False,
-            hovertemplate="%{x}<br>$%{y:,.0f}<extra>" + name + "</extra>"))
+            x=sub["dmg_dsc"],
+            q1=sub["25%"], median=sub["50%"], q3=sub["75%"],
+            lowerfence=sub["lowerfence"], upperfence=sub["upperfence"],
+            name=bname,
+            marker_color=_bcolor[appr],
+            fillcolor=_bfill[appr],
+            line=dict(color=_bcolor[appr], width=1.5),
+            hovertemplate="%{x}<br>Median: $%{median:,.0f}<extra>" + bname + "</extra>",
+        ))
     fig_box.update_layout(
         **BASE_LAYOUT, boxmode="group", showlegend=True,
         legend=dict(font=dict(size=10), orientation="h", x=0, y=1.1),
