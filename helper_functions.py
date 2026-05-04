@@ -1,994 +1,829 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CDR Assistant — Vehicle Repair Estimate</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --navy: #0f1e35;
-  --accent-green: #1d9e75;
-  --accent-green-light: #e1f5ee;
-  --accent-green-dark: #0f6e56;
-  --amber: #e8a020;
-  --amber-light: #fef3dc;
-  --red: #d4537e;
-  --red-light: #fbeaf0;
-  --blue: #378add;
-  --blue-light: #e6f1fb;
-  --bg: #f0f2f5;
-  --surface: #fff;
-  --surface-2: #f7f8fa;
-  --border: rgba(0,0,0,0.08);
-  --text: #0f1e35;
-  --text-2: #5a6a7e;
-  --text-3: #8fa0b3;
-  --font: 'DM Sans', sans-serif;
-  --mono: 'DM Mono', monospace;
-  --radius: 10px;
-  --radius-lg: 14px;
-  --sidebar-w: 248px;
-  --topbar-h: 90px;
-  --tabs-h: 46px;
-  --panel-w: 360px;
-}
-html, body { height: 100%; font-family: var(--font); background: var(--bg); color: var(--text); font-size: 14px; }
-.app { display: flex; height: 100vh; overflow: hidden; }
+"""
+In-memory sample data. Replace with DB queries when ready.
+"""
+from typing import Any, Dict, List, Optional
 
-/* ─── SIDEBAR ─── */
-.sidebar { width: var(--sidebar-w); background: var(--navy); display: flex; flex-direction: column; flex-shrink: 0; height: 100vh; overflow: hidden; }
-.sidebar-logo { padding: 18px 18px 14px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.logo-mark { width: 34px; height: 34px; background: var(--accent-green); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fff; flex-shrink: 0; }
-.logo-text { color: #fff; font-size: 14px; font-weight: 500; }
-.logo-sub { color: rgba(255,255,255,0.38); font-size: 10px; }
-.sidebar-user { padding: 14px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.avatar { width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.18); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; color: #fff; flex-shrink: 0; }
-.user-name { color: #fff; font-size: 13px; font-weight: 500; }
-.user-role { color: rgba(255,255,255,0.4); font-size: 11px; }
-.sidebar-search { padding: 12px 14px 8px; }
-.search-input { width: 100%; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 7px 11px; font-family: var(--font); font-size: 12px; color: rgba(255,255,255,0.8); outline: none; }
-.search-input::placeholder { color: rgba(255,255,255,0.3); }
-.sidebar-filters { padding: 6px 14px 10px; display: flex; gap: 5px; flex-wrap: wrap; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.filter-chip { font-size: 10.5px; padding: 3px 9px; border-radius: 12px; cursor: pointer; border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.5); background: transparent; transition: all 0.15s; }
-.filter-chip.active { background: var(--accent-green); color: #fff; border-color: var(--accent-green); }
-.incidents-list { flex: 1; overflow-y: scroll; padding: 6px 0; min-height: 0; }
-.incidents-list::-webkit-scrollbar { width: 3px; }
-.incidents-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 99px; }
-.incident-item { display: flex; align-items: center; justify-content: space-between; padding: 9px 18px; cursor: pointer; transition: background 0.12s; border-left: 3px solid transparent; }
-.incident-item:hover { background: rgba(255,255,255,0.05); }
-.incident-item.active { background: rgba(255,255,255,0.1); border-left-color: var(--accent-green); }
-.incident-id { color: rgba(255,255,255,0.8); font-size: 12px; font-weight: 500; font-family: var(--mono); }
-.incident-item.active .incident-id { color: #fff; }
-.incident-sub { font-size: 10px; color: rgba(255,255,255,0.33); margin-top: 2px; }
-.status-pill { font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; white-space: nowrap; }
-.s-flagged  { background: rgba(212,83,126,0.2); color: #e07aa5; }
-.s-approved { background: rgba(29,158,117,0.2); color: #3dcca0; }
-.s-pending  { background: rgba(55,138,221,0.2); color: #7ab8ed; }
+INCIDENTS: List[Dict[str, Any]] = [
+    {"id": "25437",    "sub_text": "GP10 · Brian Lentz",  "status": "ai_flagged"},
+    {"id": "320054",   "sub_text": "Toyota Camry",         "status": "ai_approved"},
+    {"id": "035461",   "sub_text": "Honda Civic",          "status": "ai_flagged"},
+    {"id": "61265181", "sub_text": "Ford F-150",           "status": "ai_approved"},
+    {"id": "1055188",  "sub_text": "Chevrolet Malibu",     "status": "ai_flagged"},
+    {"id": "698412",   "sub_text": "Nissan Altima",        "status": "pending_ai_review"},
+    {"id": "9846503",  "sub_text": "Dodge Ram",            "status": "ai_approved"},
+    {"id": "4421098",  "sub_text": "Hyundai Sonata",       "status": "ai_flagged"},
+    {"id": "7730021",  "sub_text": "Kia Sportage",         "status": "pending_ai_review"},
+    {"id": "5519872",  "sub_text": "BMW 3 Series",         "status": "ai_approved"},
+    {"id": "8834410",  "sub_text": "Subaru Outback",       "status": "ai_flagged"},
+    {"id": "2267543",  "sub_text": "Jeep Wrangler",        "status": "pending_ai_review"},
+    {"id": "9912004",  "sub_text": "Tesla Model 3",        "status": "ai_approved"},
+    {"id": "3345671",  "sub_text": "Mazda CX-5",           "status": "ai_flagged"},
+]
 
-/* ─── MAIN ─── */
-.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.sticky-header { flex-shrink: 0; }
-.main-scroll { flex: 1; overflow-y: auto; position: relative; }
-.main-scroll::-webkit-scrollbar { width: 5px; }
-.main-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 3px; }
-
-/* ─── TOPBAR ─── */
-.topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 28px; height: var(--topbar-h); display: flex; align-items: center; justify-content: space-between; }
-.topbar-left { display: flex; align-items: center; gap: 18px; }
-.topbar-divider { width: 1px; height: 36px; background: var(--border); flex-shrink: 0; }
-.incident-num { font-size: 24px; font-weight: 600; color: var(--text); font-family: var(--mono); }
-.topbar-meta-block { display: flex; flex-direction: column; gap: 3px; }
-.topbar-vehicle { font-size: 14px; font-weight: 500; }
-.topbar-pills { display: flex; align-items: center; gap: 6px; }
-.topbar-pill { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
-.topbar-pill.green { background: var(--accent-green-light); color: var(--accent-green-dark); border-color: transparent; }
-.topbar-right { display: flex; align-items: center; gap: 10px; }
-.btn-status { background: var(--accent-green-light); color: var(--accent-green-dark); font-size: 12px; font-weight: 500; padding: 5px 14px; border-radius: 20px; border: none; cursor: default; display: flex; align-items: center; gap: 6px; transition: background 0.2s, color 0.2s; }
-.btn-status.ai-flagged { background: var(--red-light); color: var(--red); }
-.btn-status.pending    { background: var(--surface-2);  color: var(--text-2); }
-.status-dot { width: 7px; height: 7px; background: var(--accent-green); border-radius: 50%; transition: background 0.2s; }
-.btn-status.ai-flagged .status-dot { background: var(--red); }
-.btn-status.pending    .status-dot { background: var(--text-3); }
-
-/* ─── STICKY FAB ─── */
-.rates-fab { position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 400; background: var(--navy); color: #fff; font-size: 11.5px; font-weight: 500; font-family: var(--font); border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 10px; border-radius: 10px 0 0 10px; box-shadow: -4px 0 16px rgba(0,0,0,0.2); transition: background 0.15s; white-space: nowrap; letter-spacing: 0.4px; }
-.rates-fab:hover { background: #1a2e4a; }
-.rates-fab .fab-icon { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.rates-fab .fab-icon svg { width: 12px; height: 12px; }
-.rates-fab .fab-label { writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg); line-height: 1; }
-
-/* ─── SLIDE-OUT PANEL ─── */
-.panel-overlay { display: none; position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,0.3); }
-.panel-overlay.open { display: block; }
-.slide-panel { position: fixed; top: 0; right: calc(-1 * var(--panel-w) - 10px); width: var(--panel-w); height: 100vh; background: var(--surface); z-index: 501; display: flex; flex-direction: column; box-shadow: -4px 0 24px rgba(0,0,0,0.15); transition: right 0.3s cubic-bezier(0.4,0,0.2,1); overflow: hidden; }
-.slide-panel.open { right: 0; }
-.panel-head { padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--navy); }
-.panel-title { font-size: 14px; font-weight: 500; color: #fff; display: flex; align-items: center; gap: 8px; }
-.panel-close { width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.12); border: none; cursor: pointer; color: rgba(255,255,255,0.7); font-size: 14px; display: flex; align-items: center; justify-content: center; }
-.panel-body { flex: 1; overflow-y: auto; }
-.panel-body::-webkit-scrollbar { width: 4px; }
-.panel-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
-.panel-section { padding: 16px 20px; border-bottom: 1px solid var(--border); }
-.panel-section-title { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 12px; }
-.rate-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--border); }
-.rate-row:last-child { border-bottom: none; }
-.rate-label { font-size: 13px; color: var(--text-2); }
-.rate-val { font-size: 13px; font-weight: 500; font-family: var(--mono); }
-.disc-chip { background: var(--amber-light); color: #7a4d00; font-size: 11px; padding: 4px 10px; border-radius: 10px; font-weight: 500; }
-
-/* ─── PROGRESS TABS ─── */
-.progress-tabs { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 20px; display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; }
-.progress-tabs::-webkit-scrollbar { display: none; }
-.ptab { padding: 0 16px; height: var(--tabs-h); font-size: 12.5px; color: var(--text-3); cursor: pointer; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 7px; white-space: nowrap; flex-shrink: 0; }
-.ptab.t-approved { color: var(--accent-green); border-bottom-color: var(--accent-green); font-weight: 500; }
-.ptab.t-flagged  { color: var(--red); border-bottom-color: var(--red); font-weight: 500; }
-.ptab.t-pending  { color: var(--blue); border-bottom-color: var(--blue); font-weight: 500; }
-.ptab.t-inactive { color: var(--text-3); }
-.tab-icon { width: 17px; height: 17px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.tab-icon.approved { background: var(--accent-green); }
-.tab-icon.flagged  { background: var(--red); }
-.tab-icon.pending  { background: var(--blue); }
-.tab-icon.inactive { background: var(--surface-2); border: 1.5px solid var(--text-3); }
-.tab-icon svg { width: 9px; height: 9px; }
-.tab-ai-badge { font-size: 9px; padding: 1px 5px; border-radius: 6px; font-weight: 600; letter-spacing: 0.3px; }
-.tab-ai-badge.approved { background: var(--accent-green-light); color: var(--accent-green-dark); }
-.tab-ai-badge.flagged  { background: var(--red-light); color: var(--red); }
-.tab-ai-badge.pending  { background: var(--blue-light); color: #185fa5; }
-
-/* ─── CONTENT ─── */
-.content { padding: 22px 28px; display: flex; flex-direction: column; gap: 18px; }
-
-/* ─── CARDS ─── */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
-.card-head { padding: 13px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
-.card-head-title { font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
-.card-body { padding: 18px 20px; }
-.verified-tag { background: var(--accent-green-light); color: var(--accent-green-dark); font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 12px; display: flex; align-items: center; gap: 5px; }
-.count-tag { background: var(--surface-2); color: var(--text-2); font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 12px; }
-
-/* ─── TWO-COL ─── */
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-
-/* ─── ESTIMATE INFO GRID ─── */
-.est-grid { display: grid; border-bottom: 1px solid var(--border); }
-.est-cell { padding: 10px 14px; border-right: 1px solid var(--border); }
-.est-cell:last-child { border-right: none; }
-.est-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 3px; }
-.est-val { font-size: 12.5px; font-weight: 500; font-family: var(--mono); color: var(--text); word-break: break-word; white-space: normal; }
-.est-val.muted { color: var(--text-3); font-weight: 400; }
-
-/* ─── PHOTO GRID ─── */
-.photo-grid-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; display: flex; flex-direction: column; }
-.photo-grid-head { padding: 13px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.photo-grid-head-title { font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
-.photo-grid-body { padding: 14px; flex: 1; overflow-y: auto; max-height: 600px; }
-.photo-grid-body::-webkit-scrollbar { width: 4px; }
-.photo-grid-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
-.photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.photo-tile { border-radius: 8px; overflow: hidden; border: 1px solid var(--border); position: relative; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; background: var(--surface-2); }
-.photo-tile:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.14); }
-.photo-tile:hover .img-zoom-hint { opacity: 1; }
-.photo-tile.landscape img { width: 100%; height: 110px; object-fit: cover; display: block; }
-.photo-tile.portrait  img { width: 100%; height: 160px; object-fit: cover; display: block; }
-.photo-tile img { pointer-events: none; }
-.car-img-badge { position: absolute; top: 6px; left: 6px; font-size: 9px; font-weight: 500; padding: 2px 6px; border-radius: 6px; pointer-events: none; }
-.badge-damage { background: rgba(212,83,126,0.88); color: #fff; }
-.badge-ok     { background: rgba(29,158,117,0.88); color: #fff; }
-.badge-ref    { background: rgba(55,138,221,0.88); color: #fff; }
-.badge-vin    { background: rgba(10,20,42,0.82); color: #fff; }
-.badge-plate  { background: rgba(10,20,42,0.82); color: #fff; }
-.badge-odo    { background: rgba(10,20,42,0.82); color: #fff; }
-.img-zoom-hint { position: absolute; bottom: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
-.img-zoom-hint svg { width: 11px; height: 11px; }
-
-/* ─── LIGHTBOX ─── */
-.lightbox-overlay { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.88); align-items: center; justify-content: center; padding: 16px; }
-.lightbox-overlay.open { display: flex; }
-.lightbox-box { background: var(--surface); border-radius: var(--radius-lg); overflow: hidden; max-width: 1100px; width: 100%; position: relative; box-shadow: 0 32px 80px rgba(0,0,0,0.6); }
-.lightbox-img { width: 100%; max-height: 78vh; object-fit: contain; display: block; background: #111; }
-.lightbox-footer { padding: 13px 60px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); }
-.lightbox-label { font-size: 14px; font-weight: 500; }
-.lightbox-close { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; background: rgba(0,0,0,0.45); border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 15px; color: #fff; z-index: 2; }
-.lightbox-nav { position: absolute; top: calc(50% - 22px); width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; }
-.lightbox-nav.prev { left: 12px; }
-.lightbox-nav.next { right: 12px; }
-
-/* ─── TABLE ─── */
-.table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-thead tr { background: var(--accent-green-dark); }
-thead th { padding: 9px 13px; color: rgba(255,255,255,0.85); font-weight: 500; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
-tbody tr { transition: background 0.1s; }
-tbody td { padding: 8px 13px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; white-space: nowrap; }
-.line-flag { color: var(--red); font-family: var(--mono); font-size: 12px; font-weight: 600; }
-.tag-n { background: var(--blue-light); color: #185fa5; font-size: 10px; padding: 2px 6px; border-radius: 6px; font-weight: 500; }
-.labor-hl { color: var(--accent-green); font-weight: 600; font-family: var(--mono); }
-.price-hl { color: var(--accent-green); font-family: var(--mono); font-weight: 500; }
-.mono { font-family: var(--mono); }
-.ai-pill { font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 10px; white-space: nowrap; display: inline-block; }
-.ai-pill.approved { background: rgba(29,158,117,0.18); color: #0f6e56; }
-.ai-pill.flagged  { background: rgba(212,83,126,0.18); color: #d4537e; }
-tr.row-approved { background: rgba(29,158,117,0.04) !important; }
-tr.row-flagged  { background: rgba(212,83,126,0.06) !important; }
-tr.row-approved:hover { background: rgba(29,158,117,0.09) !important; }
-tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
-
-
-/* ─── BREAKDOWN ─── */
-.four-col { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-.breakdown-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
-.breakdown-card-head { padding: 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); height: 48px; }
-.breakdown-card-title { font-size: 12.5px; font-weight: 500; color: var(--text); }
-.breakdown-total-val { font-size: 18px; font-weight: 600; font-family: var(--mono); color: var(--accent-green-dark); }
-.breakdown-body { padding: 10px 16px 14px; }
-.bi { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-.bi:last-child { border-bottom: none; }
-.bi-label { color: var(--text-2); }
-.bi-val { font-family: var(--mono); font-weight: 500; font-size: 12px; }
-.bi-val.neg { color: var(--red); }
-.bi-pill { font-size: 9.5px; font-weight: 500; padding: 1px 7px; border-radius: 8px; white-space: nowrap; flex-shrink: 0; }
-.bi-pill.approved { background: rgba(29,158,117,0.15); color: #0f6e56; }
-.bi-pill.flagged  { background: rgba(212,83,126,0.15); color: #d4537e; }
-.bi-strike { text-decoration: line-through; color: var(--text-2); margin-right: 4px; }
-.bi-subsection-label { font-size: 10px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; padding: 5px 8px; background: var(--surface-2); border-radius: 6px; margin: 8px 0 4px; }
-.bi-subsection-label:first-child { margin-top: 2px; }
-.bi-corrected { color: #d4537e; font-weight: 600; margin-left: 2px; }
-
-/* ─── TOTAL BAR ─── */
-.total-bar { background: var(--accent-green-dark); border-radius: var(--radius-lg); padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; transition: background 0.2s; }
-.total-bar.flagged { background: #8c2a4e; }
-.total-bar.pending { background: #3a4e62; }
-.total-bar-label { color: rgba(255,255,255,0.6); font-size: 12px; margin-bottom: 3px; }
-.total-bar-val { font-size: 28px; font-weight: 600; color: #fff; font-family: var(--mono); line-height: 1.15; }
-.total-bar-taxes { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 5px; font-family: var(--mono); }
-.total-ai-pill { display: inline-block; font-size: 11.5px; padding: 4px 14px; border-radius: 12px; font-weight: 500; }
-.total-ai-pill.approved { background: rgba(255,255,255,0.18); color: #fff; }
-.total-ai-pill.flagged  { background: rgba(255,255,255,0.18); color: #ffc8dc; }
-.total-ai-pill.pending  { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.75); }
-
-/* ─── FEEDBACK ─── */
-.fb-btn { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; color: var(--text-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px; cursor: pointer; transition: all 0.15s; white-space: nowrap; font-family: var(--font); }
-.fb-btn:hover { border-color: var(--accent-green); color: var(--accent-green); background: var(--accent-green-light); }
-.fb-btn svg { width: 12px; height: 12px; flex-shrink: 0; }
-.fb-popover { display: none; position: fixed; z-index: 800; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; width: 280px; box-shadow: 0 8px 32px rgba(0,0,0,0.14); }
-.fb-popover.open { display: block; }
-.fb-pop-title { font-size: 12px; font-weight: 500; color: var(--text); margin-bottom: 12px; }
-.fb-pop-section { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-.fb-thumbs { display: flex; gap: 8px; margin-bottom: 14px; }
-.fb-thumb { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; border-radius: 8px; border: 1.5px solid var(--border); cursor: pointer; font-size: 12px; font-weight: 500; color: var(--text-2); transition: all 0.15s; background: var(--surface); }
-.fb-thumb:hover { border-color: var(--accent-green); color: var(--accent-green); background: var(--accent-green-light); }
-.fb-thumb.active-up   { border-color: var(--accent-green); background: var(--accent-green-light); color: var(--accent-green-dark); }
-.fb-thumb.active-down { border-color: var(--red); background: var(--red-light); color: var(--red); }
-.fb-thumb svg { width: 14px; height: 14px; }
-.fb-textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-family: var(--font); font-size: 12px; color: var(--text); outline: none; margin-bottom: 10px; transition: border-color 0.15s; }
-.fb-textarea:focus { border-color: var(--accent-green); }
-.fb-textarea::placeholder { color: var(--text-3); }
-.fb-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.fb-cancel { font-size: 12px; font-weight: 500; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; font-family: var(--font); }
-.fb-submit { font-size: 12px; font-weight: 500; padding: 6px 14px; border-radius: 8px; border: none; background: var(--accent-green); color: #fff; cursor: pointer; font-family: var(--font); transition: background 0.15s, opacity 0.15s; }
-.fb-submit:hover:not(:disabled) { background: var(--accent-green-dark); }
-.fb-submit:disabled { opacity: 0.38; cursor: not-allowed; }
-.fb-submitted { display:none; text-align:center; padding: 8px 0 4px; }
-.fb-submitted.show { display:block; }
-.fb-submitted svg { width: 28px; height: 28px; margin-bottom: 6px; }
-.fb-submitted p { font-size: 12px; color: var(--text-2); }
-
-/* ─── LOADING SKELETON ─── */
-.skeleton { background: linear-gradient(90deg, #f0f2f5 25%, #e0e4e8 50%, #f0f2f5 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 6px; }
-@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-</style>
-</head>
-<body>
-<div class="app">
-
-<!-- ═══ SIDEBAR ═══ -->
-<aside class="sidebar">
-  <div class="sidebar-logo">
-    <div class="logo-mark">CDR</div>
-    <div><div class="logo-text">CDR Assistant</div><div class="logo-sub">Vehicle Operations</div></div>
-  </div>
-  <div class="sidebar-user">
-    <div class="avatar">LU</div>
-    <div><div class="user-name">logged_in_user</div><div class="user-role">Senior Adjuster</div></div>
-  </div>
-  <div class="sidebar-search">
-    <input class="search-input" id="searchInput" type="text" placeholder="Search by repair number…">
-  </div>
-  <div class="sidebar-filters" id="filterChips">
-    <div class="filter-chip active" data-status="all">All</div>
-    <div class="filter-chip" data-status="ai_flagged">AI Flagged</div>
-    <div class="filter-chip" data-status="ai_approved">AI Validated</div>
-    <div class="filter-chip" data-status="pending_ai_review">Pending AI Review</div>
-  </div>
-  <div class="incidents-list" id="incidentsList">
-    <!-- populated by JS -->
-  </div>
-</aside>
-
-<!-- ═══ STICKY FAB ═══ -->
-<button class="rates-fab" onclick="openPanel()" title="Labor rates &amp; discounts">
-  <div class="fab-icon">
-    <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="#fff" stroke-width="1.3"/><path d="M7 3.5v3.5l2 2" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/></svg>
-  </div>
-  <span class="fab-label">Labor rates &amp; discounts</span>
-</button>
-
-<!-- ═══ SLIDE-OUT PANEL ═══ -->
-<div class="panel-overlay" id="panelOverlay" onclick="closePanel()"></div>
-<div class="slide-panel" id="slidePanel">
-  <div class="panel-head">
-    <div class="panel-title">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="rgba(255,255,255,0.7)" stroke-width="1.2"/><path d="M7 3.5v3.5l2 2" stroke="rgba(255,255,255,0.7)" stroke-width="1.2" stroke-linecap="round"/></svg>
-      Labor rates &amp; discounts
-    </div>
-    <button class="panel-close" onclick="closePanel()">&#x2715;</button>
-  </div>
-  <div class="panel-body">
-    <div class="panel-section">
-      <div class="panel-section-title">Labor rates</div>
-      <div id="panelLaborRates"></div>
-    </div>
-    <div class="panel-section">
-      <div class="panel-section-title">Sublets &amp; misc rates</div>
-      <div id="panelSubletRates"></div>
-    </div>
-    <div class="panel-section" style="border-bottom:none">
-      <div class="panel-section-title">Discounts applied</div>
-      <div id="panelDiscounts" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;"></div>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ MAIN ═══ -->
-<div class="main">
-  <div class="sticky-header">
-
-    <!-- TOPBAR -->
-    <div class="topbar">
-      <div class="topbar-left">
-        <div>
-          <div style="font-size:10px;color:var(--text-3);margin-bottom:2px;text-transform:uppercase;letter-spacing:0.5px;">Repair</div>
-          <div class="incident-num" id="topbarIncidentNum">#—</div>
-        </div>
-        <div class="topbar-divider"></div>
-        <div class="topbar-meta-block">
-          <div class="topbar-vehicle" id="topbarVehicle">Loading…</div>
-          <div class="topbar-pills">
-            <span class="topbar-pill green" id="topbarColor"></span>
-            <span class="topbar-pill" id="topbarState"></span>
-            <span class="topbar-pill" id="topbarPlate"></span>
-          </div>
-        </div>
-      </div>
-      <div class="topbar-right">
-        <div class="btn-status"><div class="status-dot"></div><span id="topbarStatus">—</span></div>
-      </div>
-    </div>
-
-    <!-- PROGRESS TABS -->
-    <div class="progress-tabs" id="progressTabs">
-      <!-- populated by JS -->
-    </div>
-
-  </div><!-- /sticky-header -->
-
-  <div class="main-scroll">
-  <div class="content">
-
-    <!-- VEHICLE INFO + PHOTOS -->
-    <div id="section-vehicle" class="two-col" style="align-items:stretch">
-
-      <!-- Vehicle info card -->
-      <div class="card">
-        <div class="card-head">
-          <div class="card-head-title">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3.5" width="12" height="7.5" rx="2" stroke="var(--accent-green)" stroke-width="1.2"/><path d="M4 3.5V3a3 3 0 016 0v.5" stroke="var(--accent-green)" stroke-width="1.2"/></svg>
-            Vehicle information
-          </div>
-          <span class="verified-tag" id="vehicleAiTag" style="display:none">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2 2 4-4" stroke="var(--accent-green-dark)" stroke-width="1.5" stroke-linecap="round"/></svg>
-            AI verified
-          </span>
-          <button class="fb-btn" onclick="openFeedback(event,'Vehicle Information')">
-            <svg viewBox="0 0 14 14" fill="none"><path d="M7 1a6 6 0 100 12A6 6 0 007 1zm0 4v3m0 2h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-            Feedback
-          </button>
-        </div>
-        <div id="vehicleInfoBody">
-          <!-- populated by JS -->
-        </div>
-      </div>
-
-      <!-- Vehicle photos card -->
-      <div class="photo-grid-card">
-        <div class="photo-grid-head">
-          <div class="photo-grid-head-title">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="2.5" width="12" height="9" rx="2" stroke="var(--accent-green)" stroke-width="1.2"/><path d="M1 9.5l3-3 2.5 2.5L10 5l3 4.5" stroke="var(--accent-green)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Vehicle photos
-          </div>
-          <span class="count-tag" id="photoCount">—</span>
-        </div>
-        <div class="photo-grid-body">
-          <div class="photo-grid" id="photoGrid">
-            <!-- populated by JS -->
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- LIGHTBOX -->
-    <div class="lightbox-overlay" id="lightboxOverlay" onclick="closeLightboxOnBg(event)">
-      <div class="lightbox-box">
-        <button class="lightbox-nav prev" onclick="shiftLightbox(-1)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <button class="lightbox-nav next" onclick="shiftLightbox(1)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <img class="lightbox-img" id="lightboxImg" src="" alt="">
-        <div class="lightbox-footer">
-          <span class="lightbox-label" id="lightboxLabel"></span>
-          <span style="font-size:12px;color:var(--text-3);" id="lightboxCounter"></span>
-        </div>
-        <div class="lightbox-close" onclick="closeLightbox()">&#x2715;</div>
-      </div>
-    </div>
-
-    <!-- LINE ITEMS TABLE -->
-    <div id="section-lineitems" class="card">
-      <div class="card-head">
-        <div class="card-head-title">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1.5" y="1.5" width="11" height="11" rx="2" stroke="var(--accent-green)" stroke-width="1.2"/><path d="M4 5h6M4 7.5h6M4 10h4" stroke="var(--accent-green)" stroke-width="1.2" stroke-linecap="round"/></svg>
-          Line items
-        </div>
-        <span class="count-tag" id="lineItemsCount">—</span>
-        <button class="fb-btn" onclick="openFeedback(event,'Line Items')">
-          <svg viewBox="0 0 14 14" fill="none"><path d="M7 1a6 6 0 100 12A6 6 0 007 1zm0 4v3m0 2h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-          Feedback
-        </button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Line</th><th>Op</th><th>Description</th><th>Type</th><th>Part #</th><th>Price</th><th>Adjustment</th><th>Qty</th><th>Labor</th><th>Paint</th><th>AI Status</th></tr>
-          </thead>
-          <tbody id="lineItemsTbody">
-            <!-- populated by JS -->
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- BREAKDOWN CARDS -->
-    <div id="section-breakdown" class="four-col">
-      <!-- Labor -->
-      <div class="breakdown-card">
-        <div class="breakdown-card-head">
-          <span class="breakdown-card-title">Labor</span>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="breakdown-total-val" id="breakdown-labor-total">—</span>
-            <button class="fb-btn" onclick="openFeedback(event,'Labor')"><svg viewBox="0 0 14 14" fill="none"><path d="M7 1a6 6 0 100 12A6 6 0 007 1zm0 4v3m0 2h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Feedback</button>
-          </div>
-        </div>
-        <div class="breakdown-body" id="breakdown-labor-body"></div>
-      </div>
-      <!-- Parts -->
-      <div class="breakdown-card">
-        <div class="breakdown-card-head">
-          <span class="breakdown-card-title">Parts</span>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="breakdown-total-val" id="breakdown-parts-total">—</span>
-            <button class="fb-btn" onclick="openFeedback(event,'Parts')"><svg viewBox="0 0 14 14" fill="none"><path d="M7 1a6 6 0 100 12A6 6 0 007 1zm0 4v3m0 2h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Feedback</button>
-          </div>
-        </div>
-        <div class="breakdown-body" id="breakdown-parts-body"></div>
-      </div>
-      <!-- Materials -->
-      <div class="breakdown-card">
-        <div class="breakdown-card-head">
-          <span class="breakdown-card-title">Materials</span>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="breakdown-total-val" id="breakdown-materials-total">—</span>
-            <button class="fb-btn" onclick="openFeedback(event,'Materials')"><svg viewBox="0 0 14 14" fill="none"><path d="M7 1a6 6 0 100 12A6 6 0 007 1zm0 4v3m0 2h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Feedback</button>
-          </div>
-        </div>
-        <div class="breakdown-body" id="breakdown-materials-body"></div>
-      </div>
-      <!-- Miscellaneous -->
-      <div class="breakdown-card">
-        <div class="breakdown-card-head">
-          <span class="breakdown-card-title">Misc</span>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="breakdown-total-val" id="breakdown-miscellaneous-total">—</span>
-            <button class="fb-btn" onclick="openFeedback(event,'Miscellaneous')"><svg viewBox="0 0 14 14" fill="none"><path d="M7 1a6 6 0 100 12A6 6 0 007 1zm0 4v3m0 2h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Feedback</button>
-          </div>
-        </div>
-        <div class="breakdown-body" id="breakdown-miscellaneous-body"></div>
-      </div>
-    </div>
-
-    <!-- TOTAL BAR -->
-    <div id="section-total">
-    <div class="total-bar" id="totalBar">
-      <div>
-        <div class="total-bar-label">Total claim before taxes</div>
-        <div class="total-bar-val" id="totalAmount">—</div>
-        <div class="total-bar-taxes" id="totalTaxes"></div>
-      </div>
-      <div style="text-align:right">
-        <div id="totalPill"></div>
-      </div>
-    </div>
-    </div><!-- /section-total -->
-
-  </div><!-- /content -->
-  </div><!-- /main-scroll -->
-</div><!-- /main -->
-</div><!-- /app -->
-
-<!-- FEEDBACK POPOVER -->
-<div class="fb-popover" id="fbPopover">
-  <div id="fbForm">
-    <div class="fb-pop-title" id="fbPopTitle">Feedback</div>
-    <div class="fb-pop-section">Was this helpful?</div>
-    <div class="fb-thumbs">
-      <div class="fb-thumb" id="fbThumbUp" onclick="toggleThumb('up')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M5 7V13H3a1 1 0 01-1-1V8a1 1 0 011-1h2zm0 0l2-4a2 2 0 012 2v1h3a1 1 0 011 1l-1 4a1 1 0 01-1 1H5V7z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
-        Helpful
-      </div>
-      <div class="fb-thumb" id="fbThumbDown" onclick="toggleThumb('down')">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M11 9V3h2a1 1 0 011 1v4a1 1 0 01-1 1h-2zm0 0l-2 4a2 2 0 01-2-2v-1H4a1 1 0 01-1-1l1-4a1 1 0 011-1h6v4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
-        Not helpful
-      </div>
-    </div>
-    <div class="fb-pop-section">Comments (optional)</div>
-    <textarea class="fb-textarea" id="fbText" placeholder="Share your thoughts on this section…"></textarea>
-    <div class="fb-actions">
-      <button class="fb-cancel" onclick="closeFeedback()">Cancel</button>
-      <button class="fb-submit" id="fbSubmitBtn" onclick="submitFeedback()">Submit</button>
-    </div>
-  </div>
-  <div class="fb-submitted" id="fbSubmitted">
-    <svg viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="13" fill="var(--accent-green-light)"/><path d="M8 14l4 4 8-8" stroke="var(--accent-green-dark)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <p>Thanks for your feedback!</p>
-  </div>
-</div>
-
-<script>
-// ─── State ───────────────────────────────────────────────────────────────────
-let _currentIncidentId = null;
-let _currentFilter = 'all';
-let _searchTimer = null;
-let _photos = [];
-
-// ─── Panel ───────────────────────────────────────────────────────────────────
-function openPanel()  { document.getElementById('slidePanel').classList.add('open'); document.getElementById('panelOverlay').classList.add('open'); }
-function closePanel() { document.getElementById('slidePanel').classList.remove('open'); document.getElementById('panelOverlay').classList.remove('open'); }
-
-// ─── Sidebar helpers ─────────────────────────────────────────────────────────
-const STATUS_CLASS = { ai_flagged: 's-flagged', ai_approved: 's-approved', pending_ai_review: 's-pending' };
-const STATUS_LABEL = { ai_flagged: 'AI Flagged', ai_approved: 'AI Validated', pending_ai_review: 'Pending AI Review' };
-
-function renderSidebar(incidents) {
-  const list = document.getElementById('incidentsList');
-  if (!incidents.length) {
-    list.innerHTML = '<div style="padding:20px 18px;color:rgba(255,255,255,0.3);font-size:12px;">No repairs found.</div>';
-    return;
-  }
-  list.innerHTML = incidents.map(inc => {
-    const isActive = inc.id === _currentIncidentId;
-    const sc = STATUS_CLASS[inc.status] || 's-pending';
-    const sl = STATUS_LABEL[inc.status] || inc.status;
-    return `<div class="incident-item${isActive ? ' active' : ''}" onclick="selectIncident('${esc(inc.id)}')">
-      <div>
-        <div class="incident-id">Rpr# ${esc(inc.id)}</div>
-        <div class="incident-sub">${esc(inc.sub_text)}</div>
-      </div>
-      <span class="status-pill ${sc}">${sl}</span>
-    </div>`;
-  }).join('');
+# ---------------------------------------------------------------------------
+# Full detail for incident 25437
+# ---------------------------------------------------------------------------
+_DETAIL_25437: dict[str, Any] = {
+    "topbar": {
+        "incident_num": "25437",
+        "vehicle": "2025 Ford Escape MO \u00a0·\u00a0 GP10 Truck — Brian Lentz",
+        "color": "WHITE",
+        "state": "MO",
+        "plate": "E746NZ",
+        "status": "In Progress",
+    },
+    "progress_tabs": [
+        {"label": "Vehicle ID check",         "status": "approved"},
+        {"label": "Parts rate & discount",     "status": "flagged"},
+        {"label": "Labor rate & discount",     "status": "approved"},
+        {"label": "Materials check",           "status": "pending"},
+        {"label": "Totals & discount matching","status": "inactive"},
+    ],
+    "vehicle_info": {
+        "ai_verified": True,
+        "fields": [
+            [
+                {"label": "RI #",          "value": "3019655373"},
+                {"label": "Legacy Claim #","value": "VX413M0ND"},
+                {"label": "Claim #",       "value": "23659699"},
+                {"label": "GPBR",          "value": "413M"},
+            ],
+            [
+                {"label": "DOL",     "value": "02/15/2026"},
+                {"label": "RPT Date","value": "02/16/2026"},
+                {"label": "RPTD By", "value": "e53c1g"},
+                {"label": "RPT GpBr","value": "41AU"},
+            ],
+            [
+                {"label": "Unit #","value": "7XDVV4"},
+                {"label": "YMMS",  "value": "2025 LAND VELA EDSE"},
+                {"label": "Color", "value": "BLACK"},
+            ],
+            [
+                {"label": "Last PM Mi/Km",       "value": "19,711"},
+                {"label": "Mi/Km to Next PM",    "value": "5,045"},
+                {"label": "Unit Controlling GPBR","value": "413M"},
+            ],
+            [
+                {"label": "Corp. Car Class","value": "UDAR"},
+                {"label": "Use Code",       "value": "DR"},
+                {"label": "Parts Viewer",   "value": "N", "muted": True},
+            ],
+            [
+                {"label": "Purchase Date",  "value": "N/A",          "muted": True},
+                {"label": "In Service Date","value": "12/31/24"},
+                {"label": "Branch Type",    "value": "DAILY RENTAL"},
+            ],
+            [
+                {"label": "Adjuster",           "value": "E705QV – MCCART, TJ"},
+                {"label": "Hold Status Reason", "value": "N/A", "muted": True},
+                {"label": "Rpr Hold Reason",    "value": "N/A", "muted": True},
+            ],
+        ],
+        "vin": {
+            "label": "VIN",
+            "value": "SALYL2EX8SA810445",
+            "value_per_ai": "SALYL2EX8SA810445",
+            "ai_status": "approved",
+        },
+        "license_plate": {
+            "label": "License plate / State",
+            "value": "64EYXM · FL",
+            "value_per_ai": "64EYXM · FL",
+            "ai_status": "approved",
+        },
+        "odometer": {
+            "label": "Odometer (Mi/Km)",
+            "value": "None",
+            "value_per_ai": "24,166",
+            "ai_status": "flagged",
+        },
+        "damage_description": (
+            "Key: Other — Missing Passenger Mirror. Vehicle sustained impact damage to the "
+            "passenger side front door mirror assembly. Mirror housing is completely detached "
+            "from the mounting bracket. Internal motor mechanism and heating element wiring are "
+            "exposed and show signs of moisture intrusion. Surrounding door panel has minor scuff "
+            "marks and paint transfer consistent with a sideswipe collision. No structural damage "
+            "to door frame observed."
+        ),
+    },
+    "photos": [
+        {"url": "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=400&h=560&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=1200&h=800&fit=crop",
+         "label": "VIN Number", "badge": "vin", "orientation": "portrait"},
+        {"url": "https://images.unsplash.com/photo-1471444928139-48c5bf5173f8?w=400&h=280&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1471444928139-48c5bf5173f8?w=1200&h=800&fit=crop",
+         "label": "License Plate", "badge": "plate", "orientation": "landscape"},
+        {"url": "https://images.unsplash.com/photo-1551836022-4c4c79ecde51?w=400&h=560&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1551836022-4c4c79ecde51?w=1200&h=800&fit=crop",
+         "label": "Odometer", "badge": "odo", "orientation": "portrait"},
+        {"url": "https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=400&h=280&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=1200&h=800&fit=crop",
+         "label": "Front bumper — Damage", "badge": "damage", "orientation": "landscape"},
+        {"url": "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&h=280&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=1200&h=800&fit=crop",
+         "label": "Grille — Damage", "badge": "damage", "orientation": "landscape"},
+        {"url": "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?w=400&h=280&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?w=1200&h=800&fit=crop",
+         "label": "Panel, Rocker LT — Damage", "badge": "damage", "orientation": "landscape"},
+        {"url": "https://images.unsplash.com/photo-1597007066704-67bf2068d5b2?w=400&h=560&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1597007066704-67bf2068d5b2?w=1200&h=800&fit=crop",
+         "label": "Quarter Panel LT — Refinish", "badge": "refinish", "orientation": "portrait"},
+        {"url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=400&h=280&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1200&h=800&fit=crop",
+         "label": "Full vehicle — Pre-repair", "badge": "ok", "orientation": "landscape"},
+        {"url": "https://images.unsplash.com/photo-1471444928139-48c5bf5173f8?w=400&h=280&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1471444928139-48c5bf5173f8?w=1200&h=800&fit=crop",
+         "label": "Rear view — Pre-repair", "badge": "ok", "orientation": "landscape"},
+        {"url": "https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=400&h=280&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=1200&h=800&fit=crop",
+         "label": "Color match — Refinish", "badge": "refinish", "orientation": "landscape"},
+        {"url": "https://images.unsplash.com/photo-1511919884226-fd3cad34687c?w=400&h=560&fit=crop&auto=format",
+         "lightbox_url": "https://images.unsplash.com/photo-1511919884226-fd3cad34687c?w=1200&h=800&fit=crop",
+         "label": "Guard, Mud LT — Damage", "badge": "damage", "orientation": "portrait"},
+    ],
+    "line_items": [
+        {"line": "001",    "op": "RI",   "description": "Front bumper cover R&I",   "type": None, "part_num": None,         "price": None,     "qty": None, "labor": "1.1 B", "paint": None,    "adjustment": None,   "adjustment_per_ai": None,  "adjustment_ai_status": None,      "ai_status": "approved", "flag_special": False},
+        {"line": "002",    "op": "RR",   "description": "Grille, Frt Bmpr Cvr",     "type": "N",  "part_num": "622546LY0A", "price": "$612.49","qty": "1",  "labor": "0.5 B", "paint": None,    "adjustment": "-25%", "adjustment_per_ai": "-28%","adjustment_ai_status": "flagged",  "ai_status": "flagged",  "flag_special": False},
+        {"line": "003 *",  "op": "PRPR", "description": "Panel, Rocker LT",         "type": None, "part_num": None,         "price": None,     "qty": None, "labor": "5 B",   "paint": None,    "adjustment": None,   "adjustment_per_ai": None,  "adjustment_ai_status": None,      "ai_status": "approved", "flag_special": False},
+        {"line": "004",    "op": "REF",  "description": "Panel, Rocker LT",         "type": None, "part_num": None,         "price": None,     "qty": None, "labor": None,    "paint": "3 R",   "adjustment": None,   "adjustment_per_ai": None,  "adjustment_ai_status": None,      "ai_status": None,       "flag_special": False},
+        {"line": "005",    "op": "REF",  "description": "Panel, Rocker LT",         "type": None, "part_num": None,         "price": None,     "qty": None, "labor": None,    "paint": "0.3 R", "adjustment": "-5%",  "adjustment_per_ai": "-10%","adjustment_ai_status": "flagged",  "ai_status": "flagged",  "flag_special": False},
+        {"line": "006",    "op": "RR",   "description": "Tape, Quarter Panel LT",   "type": "N",  "part_num": "788656LB0A", "price": "$26.53", "qty": "1",  "labor": "0.2 B", "paint": None,    "adjustment": "-15%", "adjustment_per_ai": "-15%","adjustment_ai_status": "approved", "ai_status": "approved", "flag_special": False},
+        {"line": "007",    "op": "RI",   "description": "Guard, Mud LT",            "type": None, "part_num": None,         "price": None,     "qty": None, "labor": "0.1 B", "paint": None,    "adjustment": None,   "adjustment_per_ai": None,  "adjustment_ai_status": None,      "ai_status": None,       "flag_special": False},
+        {"line": "008 *",  "op": "SUB",  "description": "Corrosion protection",     "type": None, "part_num": None,         "price": "$10.00", "qty": None, "labor": None,    "paint": "0 R",   "adjustment": None,   "adjustment_per_ai": None,  "adjustment_ai_status": None,      "ai_status": "approved", "flag_special": False},
+        {"line": "009 *",  "op": "REF",  "description": "Color tint",               "type": None, "part_num": None,         "price": None,     "qty": None, "labor": None,    "paint": "0.5 R", "adjustment": None,   "adjustment_per_ai": None,  "adjustment_ai_status": None,      "ai_status": None,       "flag_special": False},
+        {"line": "010 *",  "op": "SUB",  "description": "Cover car exterior",       "type": None, "part_num": None,         "price": "$5.00",  "qty": None, "labor": None,    "paint": "0 R",   "adjustment": "-10%", "adjustment_per_ai": "0%",  "adjustment_ai_status": "flagged",  "ai_status": "flagged",  "flag_special": False},
+        {"line": "011 *",  "op": "SUB",  "description": "Hazardous waste removal",  "type": None, "part_num": None,         "price": "$5.00",  "qty": None, "labor": "0 B",   "paint": None,    "adjustment": None,   "adjustment_per_ai": None,  "adjustment_ai_status": None,      "ai_status": "approved", "flag_special": False},
+        {"line": "012 *",  "op": "SUB",  "description": "Post-scan",                "type": None, "part_num": None,         "price": "$70.00", "qty": None, "labor": None,    "paint": "0.5 M", "adjustment": "-5%",  "adjustment_per_ai": "-5%", "adjustment_ai_status": "approved", "ai_status": None,       "flag_special": False},
+        {"line": "013 * †","op": "SUB",  "description": "Front radar calibration",  "type": None, "part_num": None,         "price": "$760.00","qty": None, "labor": "0 B",   "paint": None,    "adjustment": "-5%",  "adjustment_per_ai": "0%",  "adjustment_ai_status": "flagged",  "ai_status": "flagged",  "flag_special": True},
+    ],
+    "line_items_alert": "Rate discrepancy on line 002: Estimate rate 25% does not match CDR profile rate 28% for domestic part category.",
+    "breakdown": {
+        "labor": {
+            "total": "$450.50",   "total_per_ai": "$461.75",
+            "items": [
+                {"label": "Body (6.9 hrs @ $40)",        "value": "$276.00","value_per_ai": "$276.00","ai_status": "approved","negative": False},
+                {"label": "Mechanical (0.5 hrs @ $45)",  "value": "$22.50", "value_per_ai": "$33.75", "ai_status": "flagged", "negative": False},
+                {"label": "Refinish (3.8 hrs @ $40)",    "value": "$152.00","value_per_ai": "$152.00","ai_status": "approved","negative": False},
+            ],
+        },
+        "parts": {
+            "total": "$543.17",   "total_per_ai": "$524.77",
+            "subsections": [
+                {
+                    "label": "Domestic Parts",
+                    "subtotal": "$26.53",     "subtotal_per_ai": "$26.53",    "subtotal_ai_status": "approved",
+                    "adjustment": "-$3.98",   "adjustment_per_ai": "-$3.98",  "adjustment_ai_status": "approved",
+                    "adjustment_label": "-15%",
+                },
+                {
+                    "label": "Foreign Parts",
+                    "subtotal": "$612.49",    "subtotal_per_ai": "$612.49",   "subtotal_ai_status": "approved",
+                    "adjustment": "-$153.12", "adjustment_per_ai": "-$171.50","adjustment_ai_status": "flagged",
+                    "adjustment_label": "-25%",
+                },
+                {
+                    "label": "Aftermarket Parts",
+                    "subtotal": "$0.00",      "subtotal_per_ai": "$0.00",     "subtotal_ai_status": "approved",
+                    "adjustment": "$0.00",    "adjustment_per_ai": "$0.00",   "adjustment_ai_status": "approved",
+                    "adjustment_label": "-0%",
+                },
+            ],
+            "items": [
+                {"label": "New parts subtotal", "value": "$639.02","value_per_ai": "$612.49","ai_status": "flagged", "negative": False},
+                {"label": "Adjustment -15%",    "value": "-$95.85","value_per_ai": "-$95.85","ai_status": "approved","negative": True},
+            ],
+        },
+        "materials": {
+            "total": "$83.60",    "total_per_ai": "$102.00",
+            "items": [
+                {"label": "Paint materials", "value": "$83.60","value_per_ai": "$83.60","ai_status": "approved","negative": False},
+                {"label": "Primer & sealer", "value": "$0.00", "value_per_ai": "$18.40","ai_status": "flagged", "negative": False},
+            ],
+        },
+        "miscellaneous": {
+            "total": "$850.00",   "total_per_ai": "$785.00",
+            "items": [
+                {"label": "Other – sublet",   "value": "$850.00","value_per_ai": "$850.00","ai_status": "approved","negative": False},
+                {"label": "Radar calibration","value": "$760.00","value_per_ai": "$695.00","ai_status": "flagged", "negative": False},
+            ],
+        },
+    },
+    "total": {
+        "amount": "$1,927.27",
+        "amount_per_ai": "$1,873.52",
+        "ai_status": "flagged",
+        "taxes": "$192.73",
+        "threshold": "$4,000.00",
+    },
+    "labor_rates": [
+        {"label": "Body labor rate",       "value": "$40.00 / hr"},
+        {"label": "Mechanical labor rate", "value": "$45.00 / hr"},
+        {"label": "Frame labor rate",      "value": "$40.00 / hr"},
+        {"label": "Paint & material",      "value": "$22.00 / hr"},
+    ],
+    "sublet_rates": [
+        {"label": "Anti corrosion",          "value": "$10.00 flat"},
+        {"label": "Car cover",               "value": "$5.00 flat"},
+        {"label": "Hazardous waste",         "value": "$5.00 flat"},
+        {"label": "Post-scan",               "value": "$70.00 flat"},
+        {"label": "Front radar calibration", "value": "$760.00 flat"},
+    ],
+    "discounts": ["Domestic parts –15%", "Foreign parts –15%", "Keyless –15%"],
 }
 
-// ─── Fetch incidents (sidebar) ────────────────────────────────────────────────
-async function loadIncidents() {
-  const search = document.getElementById('searchInput').value.trim();
-  const url = `/api/incidents?status=${encodeURIComponent(_currentFilter)}&search=${encodeURIComponent(search)}`;
-  try {
-    const r = await fetch(url);
-    const data = await r.json();
-    renderSidebar(data);
-  } catch(e) { console.error('loadIncidents error', e); }
-}
 
-// ─── Select incident ──────────────────────────────────────────────────────────
-async function selectIncident(id) {
-  _currentIncidentId = id;
-  // Update active state immediately
-  document.querySelectorAll('.incident-item').forEach(el => {
-    const elId = el.querySelector('.incident-id').textContent.replace('Rpr# ','').trim();
-    el.classList.toggle('active', elId === id);
-  });
-  await loadIncidentDetail(id);
-}
+def _tab_status(items: List[Optional[str]]) -> str:
+    """Derive approved/flagged/pending from a list of ai_status values."""
+    vals = [v for v in items if v]
+    if "flagged" in vals:
+        return "flagged"
+    if vals and all(v == "approved" for v in vals):
+        return "approved"
+    return "pending"
 
-// ─── Fetch + render incident detail ──────────────────────────────────────────
-async function loadIncidentDetail(id) {
-  try {
-    const r = await fetch(`/api/incidents/${encodeURIComponent(id)}`);
-    if (!r.ok) { console.error('incident not found', id); return; }
-    const d = await r.json();
-    renderTopbar(d.topbar);
-    renderProgressTabs(d.progress_tabs);
-    renderVehicleInfo(d.vehicle_info);
-    renderPhotos(d.photos);
-    renderLineItems(d.line_items, d.line_items_alert);
-    renderBreakdown(d.breakdown);
-    renderTotal(d.total);
-    renderRatesPanel(d.labor_rates, d.sublet_rates, d.discounts);
-  } catch(e) { console.error('loadIncidentDetail error', e); }
-}
 
-// ─── Topbar ───────────────────────────────────────────────────────────────────
-function renderTopbar(t) {
-  document.getElementById('topbarIncidentNum').textContent = '#' + t.incident_num;
-  document.getElementById('topbarVehicle').textContent = t.vehicle;
-  document.getElementById('topbarColor').textContent = t.color;
-  document.getElementById('topbarState').textContent = t.state;
-  document.getElementById('topbarPlate').textContent = t.plate;
-  document.getElementById('topbarStatus').textContent = t.status;
-  const statusBtn = document.querySelector('.btn-status');
-  statusBtn.classList.remove('ai-flagged', 'pending');
-  if (t.status === 'AI Flagged')        statusBtn.classList.add('ai-flagged');
-  else if (t.status === 'Pending AI Review') statusBtn.classList.add('pending');
-}
+def compute_progress_tabs(detail: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Derive 4 progress-tab statuses from the actual incident data.
+    NOTE: compute_ai_statuses must run before this so detail['total']['ai_status'] is set.
+    """
+    vi = detail["vehicle_info"]
+    bd = detail["breakdown"]
 
-// ─── Progress tabs ────────────────────────────────────────────────────────────
-const TAB_ICONS = {
-  approved: `<svg viewBox="0 0 10 10" fill="none"><path d="M2 5l2 2 4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-  flagged:  `<svg viewBox="0 0 10 10" fill="none"><path d="M5 2.5v3M5 7h.01" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg>`,
-  pending:  `<svg viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="2" fill="#fff"/></svg>`,
-  inactive: '',
-};
-const TAB_CLS = { approved:'t-approved', flagged:'t-flagged', pending:'t-pending', inactive:'t-inactive' };
+    # Tab 1 — Vehicle ID Check: VIN + plate + odometer
+    id_status = _tab_status([
+        vi["vin"]["ai_status"],
+        vi["license_plate"]["ai_status"],
+        vi["odometer"]["ai_status"],
+    ])
 
-function renderProgressTabs(tabs) {
-  const container = document.getElementById('progressTabs');
-  container.innerHTML = tabs.map(tab => {
-    const cls   = TAB_CLS[tab.status] || 't-inactive';
-    const icon  = TAB_ICONS[tab.status] || '';
-    const badge = tab.status !== 'inactive'
-      ? `<span class="tab-ai-badge ${tab.status}">AI</span>` : '';
-    const click = tab.target ? ` onclick="scrollToSection('${tab.target}')"` : '';
-    return `<div class="ptab ${cls}"${click}><div class="tab-icon ${tab.status}">${icon}</div>${esc(tab.label)}${badge}</div>`;
-  }).join('');
-}
+    # Tab 2 — Line Item Price & Discount Check: all line-item ai_status + adjustment_ai_status
+    li_statuses: List[Optional[str]] = []
+    for li in detail.get("line_items", []):
+        li_statuses.append(li.get("ai_status"))
+        li_statuses.append(li.get("adjustment_ai_status"))
+    li_status = _tab_status(li_statuses)
 
-function scrollToSection(id) {
-  const container = document.querySelector('.main-scroll');
-  const el = document.getElementById(id);
-  if (!el || !container) return;
-  const offset = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
-  container.scrollTo({ top: offset, behavior: 'smooth' });
-}
+    # Tab 3 — Subtotals & Discount Check: all breakdown items and subsection rows
+    sub_statuses: List[Optional[str]] = []
+    for key in ["labor", "parts", "materials", "miscellaneous"]:
+        sec = bd.get(key, {})
+        for item in sec.get("items", []):
+            sub_statuses.append(item.get("ai_status"))
+        for sub in sec.get("subsections", []):
+            sub_statuses.append(sub.get("subtotal_ai_status"))
+            sub_statuses.append(sub.get("adjustment_ai_status"))
+    sub_status = _tab_status(sub_statuses)
 
-// ─── Vehicle info ─────────────────────────────────────────────────────────────
-function renderAiFieldCell(field, isLast) {
-  const flagged = field.ai_status === 'flagged' && field.value !== field.value_per_ai;
-  const valHtml = flagged
-    ? `<div style="display:flex;flex-direction:column;gap:2px;">
-         <span class="est-val" style="text-decoration:line-through;color:var(--text-2);font-size:12px;">${esc(field.value)}</span>
-         <span class="est-val" style="color:#d4537e;font-weight:600;font-size:12px;">&rarr;&nbsp;${esc(field.value_per_ai)}</span>
-       </div>`
-    : `<div class="est-val" style="font-size:12px;">${esc(field.value)}</div>`;
-  const bg    = field.ai_status === 'flagged' ? 'rgba(212,83,126,0.15)' : 'rgba(29,158,117,0.15)';
-  const color = field.ai_status === 'flagged' ? '#d4537e' : '#0f6e56';
-  const label = field.ai_status === 'flagged' ? 'AI Flagged' : 'AI Validated';
-  return `<div class="est-cell"${isLast ? ' style="border-right:none"' : ''}>
-    <div class="est-label">${esc(field.label)}</div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;">
-      ${valHtml}
-      <span style="font-size:9px;font-weight:500;padding:2px 6px;border-radius:8px;background:${bg};color:${color};white-space:nowrap;margin-left:4px;">${label}</span>
-    </div>
-  </div>`;
-}
+    # Tab 4 — Total & Taxes Check: grand total ai_status (set by compute_ai_statuses)
+    total_status = detail.get("total", {}).get("ai_status", "pending")
+    if total_status not in ("approved", "flagged", "pending"):
+        total_status = "pending"
 
-function renderVehicleInfo(info) {
-  let html = '';
+    return [
+        {"label": "Vehicle ID Check",                 "status": id_status,    "target": "section-vehicle"},
+        {"label": "Line Item Price & Discount Check",  "status": li_status,    "target": "section-lineitems"},
+        {"label": "Subtotals & Discount Check",        "status": sub_status,   "target": "section-breakdown"},
+        {"label": "Total & Taxes Check",               "status": total_status, "target": "section-total"},
+    ]
 
-  // Regular field rows
-  info.fields.forEach(row => {
-    const cols = row.length;
-    html += `<div class="est-grid" style="grid-template-columns:repeat(${cols},1fr)">`;
-    row.forEach((f, i) => {
-      const last = i === row.length - 1;
-      html += `<div class="est-cell"${last ? ' style="border-right:none"' : ''}>
-        <div class="est-label">${esc(f.label)}</div>
-        <div class="est-val${f.muted ? ' muted' : ''}">${esc(f.value)}</div>
-      </div>`;
-    });
-    html += '</div>';
-  });
 
-  // VIN / Plate / Odometer row
-  html += `<div class="est-grid" style="grid-template-columns:repeat(3,1fr);border-bottom:none">
-    ${renderAiFieldCell(info.vin, false)}
-    ${renderAiFieldCell(info.license_plate, false)}
-    ${renderAiFieldCell(info.odometer, true)}
-  </div>`;
+def _adj_amount(amount_str: str, delta: float) -> str:
+    """Adjust a '$1,234.56' string by delta and return same format."""
+    val = float(amount_str.lstrip("$").replace(",", ""))
+    return "${:,.2f}".format(val + delta)
 
-  // Damage description
-  html += `<div style="padding:12px 14px 14px;border-top:1px solid var(--border)">
-    <div class="est-label">Damage description</div>
-    <div style="font-size:15px;font-weight:400;margin-top:6px;color:var(--text);line-height:1.6;">${esc(info.damage_description)}</div>
-  </div>`;
 
-  document.getElementById('vehicleInfoBody').innerHTML = html;
-  document.getElementById('vehicleAiTag').style.display = info.ai_verified ? 'flex' : 'none';
-}
+def _make_detail(
+    inc_id: str,
+    vehicle: str,
+    color: str,
+    state: str,
+    plate: str,
+    vin: str,
+    odometer: str,
+    odometer_ai: str,
+    damage: str,
+    labor_total: str,
+    parts_total: str,
+    total_amount: str,
+    total_tag: str,
+    threshold: str,
+    # Vehicle info fields (now per-incident)
+    last_pm: str = "22,400",
+    next_pm: str = "3,600",
+    unit_gpbr: str = "41M",
+    corp_class: str = "UDAR",
+    use_code: str = "DR",
+    parts_viewer: str = "N",
+    purchase_date: str = "N/A",
+    in_service_date: str = "01/15/25",
+    branch_type: str = "DAILY RENTAL",
+    adjuster: str = "E705QV – SMITH, JA",
+    hold_reason: str = "N/A",
+    rpr_hold_reason: str = "N/A",
+    rptd_by: str = "e99x2k",
+    rpt_gpbr: str = "42AU",
+    dol: str = "03/10/2026",
+    rpt_date: str = "03/11/2026",
+    # VIN / plate AI status (flagged when doc doesn't match AI)
+    vin_ai_status: str = "approved",
+    vin_per_ai: Optional[str] = None,
+    plate_ai_status: str = "approved",
+    plate_per_ai: Optional[str] = None,
+    # Labor rates (per shop/contract)
+    body_rate: str = "$40.00 / hr",
+    mech_rate: str = "$45.00 / hr",
+    frame_rate: str = "$40.00 / hr",
+    paint_rate: str = "$22.00 / hr",
+    extra_sublets: Optional[List[Dict[str, str]]] = None,
+    discounts: Optional[List[str]] = None,
+    alert: Optional[str] = None,
+    taxes: str = "$0.00",
+    total_amount_per_ai: str = "",
+    total_ai_status: str = "approved",
+    sidebar_status: str = "ai_flagged",
+) -> Dict[str, Any]:
+    """Generate a per-incident detail record from its specific parameters."""
+    # ── AI-status mode ──────────────────────────────────────────────────────
+    _flag = sidebar_status == "ai_flagged"
+    _pend = sidebar_status == "pending_ai_review"
 
-// ─── Photos ───────────────────────────────────────────────────────────────────
-const BADGE_CLASS = { vin:'badge-vin', plate:'badge-plate', odo:'badge-odo', damage:'badge-damage', ok:'badge-ok', refinish:'badge-ref' };
-const BADGE_LABEL = { vin:'VIN', plate:'Plate', odo:'Odo', damage:'Damage', ok:'Pre-repair', refinish:'Refinish' };
-const ZOOM_SVG = `<svg viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="3.5" stroke="#fff" stroke-width="1.3"/><path d="M8.5 8.5l2.5 2.5" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/><path d="M4 5.5h3M5.5 4v3" stroke="#fff" stroke-width="1.2" stroke-linecap="round"/></svg>`;
+    def _ok() -> Optional[str]:
+        """Status for items AI considers correct (all modes)."""
+        return None if _pend else "approved"
 
-function renderPhotos(photos) {
-  _photos = photos;
-  document.getElementById('photoCount').textContent = photos.length + ' photos';
-  document.getElementById('photoGrid').innerHTML = photos.map((p, i) => {
-    const bc = BADGE_CLASS[p.badge] || 'badge-ok';
-    const bl = BADGE_LABEL[p.badge] || p.badge;
-    return `<div class="photo-tile ${p.orientation}" onclick="openLightbox(${i})">
-      <span class="car-img-badge ${bc}">${bl}</span>
-      <img src="${esc(p.url)}" alt="${esc(p.label)}" loading="lazy">
-      <div class="img-zoom-hint">${ZOOM_SVG}</div>
-    </div>`;
-  }).join('');
-}
+    def _chk() -> Optional[str]:
+        """Status for items flagged only in ai_flagged mode."""
+        if _flag: return "flagged"
+        return None if _pend else "approved"
 
-// ─── Lightbox ─────────────────────────────────────────────────────────────────
-let _lbIdx = 0;
-function openLightbox(idx) { _lbIdx = idx; _renderLb(); document.getElementById('lightboxOverlay').classList.add('open'); document.body.style.overflow='hidden'; }
-function closeLightbox() { document.getElementById('lightboxOverlay').classList.remove('open'); document.body.style.overflow=''; }
-function closeLightboxOnBg(e) { if (e.target === document.getElementById('lightboxOverlay')) closeLightbox(); }
-function shiftLightbox(d) { _lbIdx = (_lbIdx + d + _photos.length) % _photos.length; _renderLb(); }
-function _renderLb() {
-  const p = _photos[_lbIdx];
-  document.getElementById('lightboxImg').src = p.lightbox_url;
-  document.getElementById('lightboxImg').alt = p.label;
-  document.getElementById('lightboxLabel').textContent = p.label;
-  document.getElementById('lightboxCounter').textContent = (_lbIdx + 1) + ' / ' + _photos.length;
-}
-document.addEventListener('keydown', e => {
-  const o = document.getElementById('lightboxOverlay');
-  if (!o.classList.contains('open')) return;
-  if (e.key === 'Escape') closeLightbox();
-  if (e.key === 'ArrowLeft')  shiftLightbox(-1);
-  if (e.key === 'ArrowRight') shiftLightbox(1);
-});
-
-// ─── Line items ───────────────────────────────────────────────────────────────
-function renderAdjCell(item) {
-  if (item.type !== 'N' || !item.adjustment) return '<td></td>';
-  const flagged = item.adjustment_ai_status === 'flagged' && item.adjustment !== item.adjustment_per_ai;
-  if (flagged) {
-    return `<td style="white-space:nowrap;">
-      <span style="text-decoration:line-through;color:var(--text-2);font-size:12.5px;font-family:var(--mono);">${esc(item.adjustment)}</span>
-      <span style="color:#d4537e;font-weight:600;font-size:12.5px;font-family:var(--mono);margin-left:4px;">&rarr;&nbsp;${esc(item.adjustment_per_ai)}</span>
-    </td>`;
-  }
-  return `<td class="mono">${esc(item.adjustment)}</td>`;
-}
-
-function renderLineItems(items, alert) {
-  document.getElementById('lineItemsCount').textContent = items.length + ' lines';
-  document.getElementById('lineItemsTbody').innerHTML = items.map(item => {
-    const rc = item.ai_status === 'approved' ? 'row-approved' : item.ai_status === 'flagged' ? 'row-flagged' : '';
-    const lc = item.flag_special ? 'line-flag' : 'mono';
-    const pill = item.ai_status
-      ? `<span class="ai-pill ${item.ai_status}">${item.ai_status === 'approved' ? 'AI Validated' : 'AI Flagged'}</span>` : '';
-    const typeHtml = item.type ? `<span class="tag-n">${esc(item.type)}</span>` : '';
-    const laborCls = item.ai_status === 'approved' && item.labor ? 'labor-hl' : 'mono';
-    const priceCls = item.flag_special ? 'price-hl' : 'mono';
-    return `<tr class="${rc}">
-      <td class="${lc}">${esc(item.line)}</td>
-      <td>${esc(item.op)}</td>
-      <td>${esc(item.description)}</td>
-      <td>${typeHtml}</td>
-      <td class="mono" style="font-size:11px">${esc(item.part_num||'')}</td>
-      <td class="${priceCls}">${esc(item.price||'')}</td>
-      ${renderAdjCell(item)}
-      <td>${esc(item.qty||'')}</td>
-      <td class="${laborCls}">${esc(item.labor||'')}</td>
-      <td class="mono">${esc(item.paint||'')}</td>
-      <td>${pill}</td>
-    </tr>`;
-  }).join('');
-
-}
-
-// ─── Breakdown ────────────────────────────────────────────────────────────────
-function _biRow(label, value, valuePai, aiStatus, negative) {
-  const flagged = aiStatus === 'flagged' && value !== valuePai;
-  const valHtml = flagged
-    ? `<span class="bi-strike">${esc(value)}</span><span class="bi-corrected">${esc(valuePai)}</span>`
-    : esc(value);
-  const pill = aiStatus
-    ? `<span class="bi-pill ${aiStatus}">${aiStatus === 'approved' ? 'AI Validated' : 'AI Flagged'}</span>` : '';
-  return `<div class="bi bi-${aiStatus||''}">
-    <span class="bi-label">${esc(label)}</span>
-    <div style="display:flex;align-items:center;gap:7px;">
-      <span class="bi-val${negative ? ' neg' : ''}">${valHtml}</span>
-      ${pill}
-    </div>
-  </div>`;
-}
-
-function renderBreakdown(breakdown) {
-  ['labor','parts','materials','miscellaneous'].forEach(key => {
-    const sec = breakdown[key];
-    const totalEl = document.getElementById(`breakdown-${key}-total`);
-    if (sec.total_per_ai && sec.total !== sec.total_per_ai) {
-      totalEl.innerHTML = `<span style="text-decoration:line-through;color:var(--text-2);font-size:16px;margin-right:5px;">${esc(sec.total)}</span><span style="color:#d4537e;">${esc(sec.total_per_ai)}</span>`;
-    } else {
-      totalEl.textContent = sec.total;
+    # Parts correction: Foreign Parts discount changes -20%→-15% when flagged
+    _DELTA: float = -28.52
+    _parts_pai = _adj_amount(parts_total, _DELTA) if _flag else parts_total
+    _total_pai = _adj_amount(total_amount, _DELTA) if _flag else (total_amount_per_ai or total_amount)
+    detail: Dict[str, Any] = {
+        "topbar": {
+            "incident_num": inc_id,
+            "vehicle": vehicle,
+            "color": color,
+            "state": state,
+            "plate": plate,
+            "status": "In Progress",
+        },
+        "vehicle_info": {
+            "fields": [
+                [
+                    {"label": "RI #",           "value": f"30{inc_id[:6]}"},
+                    {"label": "Legacy Claim #", "value": f"LG{inc_id}"},
+                    {"label": "Claim #",        "value": inc_id},
+                    {"label": "GPBR",           "value": unit_gpbr},
+                ],
+                [
+                    {"label": "DOL",     "value": dol},
+                    {"label": "RPT Date","value": rpt_date},
+                    {"label": "RPTD By", "value": rptd_by},
+                    {"label": "RPT GpBr","value": rpt_gpbr},
+                ],
+                [
+                    {"label": "Unit #","value": f"U{inc_id[:5]}"},
+                    {"label": "YMMS",  "value": vehicle[:24]},
+                    {"label": "Color", "value": color},
+                ],
+                [
+                    {"label": "Last PM Mi/Km",         "value": last_pm},
+                    {"label": "Mi/Km to Next PM",      "value": next_pm},
+                    {"label": "Unit Controlling GPBR", "value": unit_gpbr},
+                ],
+                [
+                    {"label": "Corp. Car Class","value": corp_class},
+                    {"label": "Use Code",        "value": use_code},
+                    {"label": "Parts Viewer",    "value": parts_viewer,
+                     "muted": parts_viewer == "N"},
+                ],
+                [
+                    {"label": "Purchase Date",  "value": purchase_date,
+                     "muted": purchase_date == "N/A"},
+                    {"label": "In Service Date","value": in_service_date},
+                    {"label": "Branch Type",    "value": branch_type},
+                ],
+                [
+                    {"label": "Adjuster",           "value": adjuster},
+                    {"label": "Hold Status Reason", "value": hold_reason,
+                     "muted": hold_reason == "N/A"},
+                    {"label": "Rpr Hold Reason",    "value": rpr_hold_reason,
+                     "muted": rpr_hold_reason == "N/A"},
+                ],
+            ],
+            "vin": {
+                "label": "VIN",
+                "value": vin,
+                "value_per_ai": vin_per_ai if vin_per_ai else vin,
+                "ai_status": vin_ai_status,
+            },
+            "license_plate": {
+                "label": "License plate / State",
+                "value": f"{plate} · {state}",
+                "value_per_ai": plate_per_ai if plate_per_ai else f"{plate} · {state}",
+                "ai_status": plate_ai_status,
+            },
+            "odometer": {
+                "label": "Odometer (Mi/Km)",
+                "value": odometer,
+                "value_per_ai": odometer_ai,
+                "ai_status": "flagged" if odometer != odometer_ai else "approved",
+            },
+            "damage_description": damage,
+        },
+        "photos": [
+            {"url": "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=400&h=560&fit=crop&auto=format",
+             "lightbox_url": "https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=1200&h=800&fit=crop",
+             "label": "VIN Number", "badge": "vin", "orientation": "portrait"},
+            {"url": "https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=400&h=280&fit=crop&auto=format",
+             "lightbox_url": "https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=1200&h=800&fit=crop",
+             "label": "Front — Damage", "badge": "damage", "orientation": "landscape"},
+            {"url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=400&h=280&fit=crop&auto=format",
+             "lightbox_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1200&h=800&fit=crop",
+             "label": "Full vehicle — Pre-repair", "badge": "ok", "orientation": "landscape"},
+            {"url": "https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=400&h=280&fit=crop&auto=format",
+             "lightbox_url": "https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=1200&h=800&fit=crop",
+             "label": "Color match — Refinish", "badge": "refinish", "orientation": "landscape"},
+        ],
+        "line_items": [
+            {"line": "001",   "op": "RR",  "description": "Bumper cover, front",    "type": "N",  "part_num": "521190R060", "price": "$289.95", "qty": "1",  "labor": "2.0 B", "paint": None,    "adjustment": "-15%",                     "adjustment_per_ai": "-15%", "adjustment_ai_status": _ok(),  "ai_status": _ok(),  "flag_special": False},
+            {"line": "002",   "op": "REF", "description": "Bumper cover, front",    "type": None, "part_num": None,         "price": None,      "qty": None, "labor": None,    "paint": "2.0 R", "adjustment": None,                       "adjustment_per_ai": None,   "adjustment_ai_status": None,   "ai_status": _ok(),  "flag_special": False},
+            {"line": "003",   "op": "RR",  "description": "Headlamp assembly, LT", "type": "N",  "part_num": "811500R020", "price": "$542.00", "qty": "1",  "labor": "0.8 B", "paint": None,    "adjustment": "-20%" if _flag else "-15%", "adjustment_per_ai": "-15%", "adjustment_ai_status": _chk(), "ai_status": _chk(), "flag_special": False},
+            {"line": "004 *", "op": "SUB", "description": "Post-scan",              "type": None, "part_num": None,         "price": "$70.00",  "qty": None, "labor": None,    "paint": "0.5 M", "adjustment": None,                       "adjustment_per_ai": None,   "adjustment_ai_status": None,   "ai_status": _ok(),  "flag_special": False},
+            {"line": "005 *", "op": "SUB", "description": "Hazardous waste removal","type": None, "part_num": None,         "price": "$5.00",   "qty": None, "labor": "0 B",   "paint": None,    "adjustment": None,                       "adjustment_per_ai": None,   "adjustment_ai_status": None,   "ai_status": _ok(),  "flag_special": False},
+        ],
+        "line_items_alert": alert,
+        "breakdown": {
+            "labor": {
+                "total": labor_total,
+                "total_per_ai": labor_total,
+                "items": [
+                    {"label": f"Body (2.8 hrs @ {body_rate.split('/')[0].strip()})",    "value": "$112.00", "value_per_ai": "$112.00", "ai_status": _ok(), "negative": False},
+                    {"label": f"Refinish (2.0 hrs @ {body_rate.split('/')[0].strip()})", "value": "$80.00", "value_per_ai": "$80.00",  "ai_status": _ok(), "negative": False},
+                ],
+            },
+            "parts": {
+                "total": parts_total,
+                "total_per_ai": _parts_pai,
+                "subsections": [
+                    {
+                        "label": "Domestic Parts",
+                        "subtotal": "$289.95", "subtotal_per_ai": "$289.95",                    "subtotal_ai_status": _ok(),
+                        "adjustment": "-$43.49", "adjustment_per_ai": "-$43.49",               "adjustment_ai_status": _ok(),
+                        "adjustment_label": "-15%",
+                    },
+                    {
+                        "label": "Foreign Parts",
+                        "subtotal": "$542.00", "subtotal_per_ai": "$508.45" if _flag else "$542.00", "subtotal_ai_status": _chk(),
+                        "adjustment": "-$81.30", "adjustment_per_ai": "-$76.27" if _flag else "-$81.30", "adjustment_ai_status": _chk(),
+                        "adjustment_label": "-15%",
+                    },
+                    {
+                        "label": "Aftermarket Parts",
+                        "subtotal": "$0.00", "subtotal_per_ai": "$0.00",                       "subtotal_ai_status": _ok(),
+                        "adjustment": "$0.00", "adjustment_per_ai": "$0.00",                   "adjustment_ai_status": _ok(),
+                        "adjustment_label": "-0%",
+                    },
+                ],
+                "items": [
+                    {"label": "New parts subtotal", "value": "$831.95", "value_per_ai": "$798.40" if _flag else "$831.95", "ai_status": _chk(), "negative": False},
+                    {"label": "Adjustment -15%",    "value": "-$124.80", "value_per_ai": "-$124.80",                      "ai_status": _ok(),  "negative": True},
+                ],
+            },
+            "materials": {
+                "total": "$88.00",
+                "total_per_ai": "$88.00",
+                "items": [
+                    {"label": "Paint materials", "value": "$88.00", "value_per_ai": "$88.00", "ai_status": _ok(), "negative": False},
+                ],
+            },
+            "miscellaneous": {
+                "total": "$75.00",
+                "total_per_ai": "$75.00",
+                "items": [
+                    {"label": "Other – sublet", "value": "$75.00", "value_per_ai": "$75.00", "ai_status": _ok(), "negative": False},
+                ],
+            },
+        },
+        "total": {
+            "amount": total_amount,
+            "amount_per_ai": _total_pai,
+            "ai_status": total_ai_status,
+            "taxes": taxes,
+            "threshold": threshold,
+        },
+        "labor_rates": [
+            {"label": "Body labor rate",       "value": body_rate},
+            {"label": "Mechanical labor rate", "value": mech_rate},
+            {"label": "Frame labor rate",      "value": frame_rate},
+            {"label": "Paint & material",      "value": paint_rate},
+        ],
+        "sublet_rates": (extra_sublets or [
+            {"label": "Anti corrosion",  "value": "$10.00 flat"},
+            {"label": "Car cover",       "value": "$5.00 flat"},
+            {"label": "Hazardous waste", "value": "$5.00 flat"},
+            {"label": "Post-scan",       "value": "$70.00 flat"},
+        ]),
+        "discounts": (discounts or ["Domestic parts –15%", "Foreign parts –15%"]),
     }
-    const body = document.getElementById(`breakdown-${key}-body`);
+    # Compute ai_verified from VIN+plate+odometer statuses
+    vi = detail["vehicle_info"]
+    detail["vehicle_info"]["ai_verified"] = all(
+        f["ai_status"] == "approved"
+        for f in [vi["vin"], vi["license_plate"], vi["odometer"]]
+    )
+    # progress_tabs and ai_statuses are always (re)computed in get_incident_detail
+    detail["progress_tabs"] = []
+    return detail
 
-    // Parts section: render three subsections if present
-    if (key === 'parts' && sec.subsections) {
-      body.innerHTML = sec.subsections.map(sub => `
-        <div class="bi-subsection-label">${esc(sub.label)}</div>
-        ${_biRow('Subtotal',    sub.subtotal,    sub.subtotal_per_ai,    sub.subtotal_ai_status,    false)}
-        ${_biRow(`Adjustment (${esc(sub.adjustment_label)})`, sub.adjustment, sub.adjustment_per_ai, sub.adjustment_ai_status, true)}
-      `).join('');
-    } else {
-      body.innerHTML = sec.items.map(item =>
-        _biRow(item.label, item.value, item.value_per_ai, item.ai_status, item.negative)
-      ).join('');
-    }
-  });
+
+INCIDENT_DETAILS: Dict[str, Any] = {
+    "25437": _DETAIL_25437,
+    "320054": _make_detail(
+        "320054", "2023 Toyota Camry SE · Fleet Unit", "SILVER", "TX", "RTX9821",
+        "4T1B11HK8NU123456", "31,200", "31,200",
+        "Rear-end collision. Trunk lid, rear bumper and tail lamps damaged. Paint transfer evident on bumper fascia.",
+        "$192.00", "$706.35", "$998.35", "Below threshold", "$4,000.00",
+        last_pm="28,100", next_pm="1,900", unit_gpbr="42M", corp_class="UCMR",
+        use_code="DR", parts_viewer="N", purchase_date="N/A",
+        in_service_date="11/12/22", branch_type="DAILY RENTAL",
+        adjuster="F812KX – JONES, MA", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="f22k1p", rpt_gpbr="42TX", dol="01/14/2026", rpt_date="01/15/2026",
+        body_rate="$38.00 / hr", mech_rate="$43.00 / hr", frame_rate="$38.00 / hr",
+        paint_rate="$20.00 / hr",
+        discounts=["Domestic parts –15%", "Foreign parts –15%", "Fleet –5%"],
+        sidebar_status="ai_approved",
+    ),
+    "035461": _make_detail(
+        "035461", "2022 Honda Civic EX · GP08 — Susan Park", "BLUE", "CA", "7HQP234",
+        "2HGFE2F59NH800123", "44,880", "47,120",
+        "Side-swipe damage on driver side. Door panel, mirror and rocker panel need replacement.",
+        "$220.00", "$543.17", "$1,127.27", "Below threshold", "$4,000.00",
+        last_pm="41,200", next_pm="3,800", unit_gpbr="38M", corp_class="ULDR",
+        use_code="DR", parts_viewer="Y", purchase_date="03/15/21",
+        in_service_date="04/01/21", branch_type="CORPORATE",
+        adjuster="A200LT – PARK, SU", hold_reason="Body Hold", rpr_hold_reason="N/A",
+        rptd_by="a88q3r", rpt_gpbr="38CA", dol="02/03/2026", rpt_date="02/04/2026",
+        plate_ai_status="flagged", plate_per_ai="7HQP234 · CO",
+        body_rate="$41.00 / hr", mech_rate="$46.00 / hr", frame_rate="$41.00 / hr",
+        paint_rate="$23.00 / hr",
+        discounts=["Domestic parts –15%", "Keyless –15%"],
+        alert="Rate discrepancy on line 003: Labor hours exceed profile maximum for door panel R&R.",
+    ),
+    "61265181": _make_detail(
+        "61265181", "2021 Ford F-150 XLT · GP12 — Marcus Hill", "WHITE", "FL", "FLA4432",
+        "1FTEW1EP5MFB11234", "58,310", "58,310",
+        "Front-end collision with deer. Hood, grille, headlamps and front bumper require replacement.",
+        "$360.00", "$1,240.00", "$1,870.00", "Below threshold", "$4,000.00",
+        last_pm="55,000", next_pm="3,310", unit_gpbr="45M", corp_class="UDAR",
+        use_code="DR", parts_viewer="N", purchase_date="N/A",
+        in_service_date="06/22/20", branch_type="DAILY RENTAL",
+        adjuster="T904JB – HILL, MA", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="t99j4b", rpt_gpbr="45FL", dol="03/01/2026", rpt_date="03/02/2026",
+        body_rate="$40.00 / hr", mech_rate="$48.00 / hr", frame_rate="$42.00 / hr",
+        paint_rate="$22.00 / hr",
+        extra_sublets=[
+            {"label": "Anti corrosion",  "value": "$10.00 flat"},
+            {"label": "Car cover",       "value": "$5.00 flat"},
+            {"label": "Hazardous waste", "value": "$5.00 flat"},
+            {"label": "Post-scan",       "value": "$70.00 flat"},
+            {"label": "Deer strike levy","value": "$25.00 flat"},
+        ],
+        discounts=["Domestic parts –15%", "Fleet –8%"],
+        sidebar_status="ai_approved",
+    ),
+    "1055188": _make_detail(
+        "1055188", "2020 Chevrolet Malibu LT · GP05 — Dana Cole", "BLACK", "OH", "OHJ9921",
+        "1G1ZD5ST7LF088765", "72,400", "68,100",
+        "Hail damage across roof, hood and trunk. Multiple dents requiring PDR or panel replacement.",
+        "$280.00", "$890.00", "$1,410.00", "Below threshold", "$4,000.00",
+        last_pm="68,900", next_pm="3,500", unit_gpbr="33M", corp_class="ULSV",
+        use_code="EX", parts_viewer="N", purchase_date="08/10/19",
+        in_service_date="09/01/19", branch_type="CORPORATE",
+        adjuster="P301QZ – COLE, DA", hold_reason="N/A", rpr_hold_reason="Parts Hold",
+        rptd_by="p30q1z", rpt_gpbr="33OH", dol="01/28/2026", rpt_date="01/29/2026",
+        body_rate="$39.00 / hr", mech_rate="$44.00 / hr", frame_rate="$39.00 / hr",
+        paint_rate="$21.00 / hr",
+        discounts=["Domestic parts –12%", "Hail damage –5%"],
+        alert="Odometer mismatch detected: reported 72,400 mi vs AI-verified 68,100 mi.",
+    ),
+    "698412": _make_detail(
+        "698412", "2024 Nissan Altima SR · GP02 — Kevin Walsh", "RED", "NV", "NV88014",
+        "1N4BL4BV5RN123987", "12,050", "12,050",
+        "Parking lot incident. Rear quarter panel scraped, minor bumper damage. Paint transfer present.",
+        "$120.00", "$320.00", "$670.00", "Below threshold", "$4,000.00",
+        last_pm="9,800", next_pm="2,200", unit_gpbr="50M", corp_class="UCMR",
+        use_code="DR", parts_viewer="N", purchase_date="N/A",
+        in_service_date="02/28/24", branch_type="DAILY RENTAL",
+        adjuster="K741RS – WALSH, KE", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="k74r1s", rpt_gpbr="50NV", dol="03/18/2026", rpt_date="03/19/2026",
+        sidebar_status="pending_ai_review",
+    ),
+    "9846503": _make_detail(
+        "9846503", "2022 Dodge Ram 1500 · GP15 — Larry Tran", "GRAY", "AZ", "AZR3310",
+        "1C6SRFFT6NN123400", "39,770", "39,770",
+        "Backing into a loading dock. Rear bumper step-pad, tailgate and tow-hitch cover need replacement.",
+        "$240.00", "$780.00", "$1,220.00", "Below threshold", "$4,000.00",
+        last_pm="36,500", next_pm="3,500", unit_gpbr="47M", corp_class="UDAR",
+        use_code="DR", parts_viewer="Y", purchase_date="N/A",
+        in_service_date="08/15/21", branch_type="FLEET",
+        adjuster="G502TV – TRAN, LA", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="g50t2v", rpt_gpbr="47AZ", dol="02/20/2026", rpt_date="02/21/2026",
+        body_rate="$42.00 / hr", mech_rate="$47.00 / hr",
+        discounts=["Fleet parts –12%", "Domestic parts –10%"],
+        sidebar_status="ai_approved",
+    ),
+    "4421098": _make_detail(
+        "4421098", "2023 Hyundai Sonata N · GP07 — Rachel Kim", "ORANGE", "WA", "WAB2290",
+        "KMHL14JA8PA123321", "19,300", "21,450",
+        "Rear-end collision. Trunk, bumper and tail lights heavily damaged. Frame inspection required.",
+        "$420.00", "$1,100.00", "$2,140.00", "Below threshold", "$4,000.00",
+        last_pm="17,600", next_pm="2,400", unit_gpbr="36M", corp_class="ULDR",
+        use_code="DR", parts_viewer="N", purchase_date="01/05/23",
+        in_service_date="01/20/23", branch_type="DAILY RENTAL",
+        adjuster="M110PX – KIM, RA", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="m11p0x", rpt_gpbr="36WA", dol="03/05/2026", rpt_date="03/06/2026",
+        vin_ai_status="flagged", vin_per_ai="KMHL14JA8NA123321",
+        body_rate="$40.00 / hr", mech_rate="$45.00 / hr", frame_rate="$43.00 / hr",
+        paint_rate="$22.00 / hr",
+        extra_sublets=[
+            {"label": "Anti corrosion",       "value": "$10.00 flat"},
+            {"label": "Hazardous waste",      "value": "$5.00 flat"},
+            {"label": "Post-scan",            "value": "$70.00 flat"},
+            {"label": "Frame inspection fee", "value": "$95.00 flat"},
+        ],
+        discounts=["Domestic parts –15%", "Foreign parts –15%"],
+        alert="Frame inspection flagged: potential structural damage to rear subframe.",
+    ),
+    "7730021": _make_detail(
+        "7730021", "2024 Kia Sportage EX · GP03 — Ben Ortiz", "GREEN", "CO", "COX8871",
+        "5XYP3DHCXRG123789", "8,900", "8,900",
+        "Minor front-end collision. Front bumper cover cracked, fog lamp assembly damaged.",
+        "$96.00", "$412.00", "$758.00", "Below threshold", "$4,000.00",
+        last_pm="7,100", next_pm="900", unit_gpbr="52M", corp_class="UCMR",
+        use_code="DR", parts_viewer="N", purchase_date="N/A",
+        in_service_date="11/30/23", branch_type="DAILY RENTAL",
+        adjuster="J400WV – ORTIZ, BE", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="j40w0v", rpt_gpbr="52CO", dol="03/22/2026", rpt_date="03/23/2026",
+        sidebar_status="pending_ai_review",
+    ),
+    "5519872": _make_detail(
+        "5519872", "2022 BMW 330i xDrive · GP11 — Claire Evans", "WHITE", "NY", "NYC5593",
+        "WBA5R7C01NFS12345", "27,600", "27,600",
+        "Side impact. Passenger door, rear quarter panel and wheel arch liner require attention.",
+        "$480.00", "$2,310.00", "$3,140.00", "Below threshold", "$4,000.00",
+        last_pm="24,900", next_pm="2,100", unit_gpbr="29M", corp_class="PREM",
+        use_code="DR", parts_viewer="Y", purchase_date="04/18/22",
+        in_service_date="05/01/22", branch_type="CORPORATE",
+        adjuster="L880TK – EVANS, CL", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="l88t0k", rpt_gpbr="29NY", dol="02/10/2026", rpt_date="02/11/2026",
+        body_rate="$55.00 / hr", mech_rate="$65.00 / hr", frame_rate="$55.00 / hr",
+        paint_rate="$28.00 / hr",
+        extra_sublets=[
+            {"label": "Anti corrosion",      "value": "$15.00 flat"},
+            {"label": "Post-scan (BMW)",     "value": "$120.00 flat"},
+            {"label": "ADAS calibration",    "value": "$890.00 flat"},
+        ],
+        discounts=["OEM parts –10%", "Certified shop –5%"],
+        sidebar_status="ai_approved",
+    ),
+    "8834410": _make_detail(
+        "8834410", "2021 Subaru Outback Premium · GP09 — Tom Reyes", "BROWN", "OR", "ORG6640",
+        "4S4BTADC4M3103456", "51,200", "54,800",
+        "Rollover recovery. Roof, A-pillars and windshield sustained damage. Safety systems triggered.",
+        "$660.00", "$3,100.00", "$4,920.00", "Above threshold", "$4,000.00",
+        last_pm="48,000", next_pm="3,200", unit_gpbr="31M", corp_class="UDAR",
+        use_code="EX", parts_viewer="N", purchase_date="N/A",
+        in_service_date="07/14/20", branch_type="FLEET",
+        adjuster="B225NF – REYES, TO", hold_reason="Collision", rpr_hold_reason="Frame Hold",
+        rptd_by="b22n5f", rpt_gpbr="31OR", dol="01/05/2026", rpt_date="01/06/2026",
+        vin_ai_status="flagged", vin_per_ai="4S4BTADC4N3103456",
+        body_rate="$44.00 / hr", mech_rate="$50.00 / hr", frame_rate="$46.00 / hr",
+        paint_rate="$24.00 / hr",
+        extra_sublets=[
+            {"label": "Anti corrosion",        "value": "$10.00 flat"},
+            {"label": "Hazardous waste",       "value": "$5.00 flat"},
+            {"label": "Post-scan",             "value": "$85.00 flat"},
+            {"label": "Rollover safety check", "value": "$150.00 flat"},
+            {"label": "Airbag reset",          "value": "$220.00 flat"},
+        ],
+        discounts=["Domestic parts –15%", "Fleet –8%", "Keyless –10%"],
+        alert="Claim exceeds threshold of $4,000.00 — escalation required.",
+    ),
+    "2267543": _make_detail(
+        "2267543", "2023 Jeep Wrangler Sport · GP14 — Amy Chen", "YELLOW", "UT", "UTW1102",
+        "1C4HJXDN8PW123654", "15,400", "15,400",
+        "Off-road incident. Front skid plate, lower control arm and rock rails need replacement.",
+        "$320.00", "$1,560.00", "$2,180.00", "Below threshold", "$4,000.00",
+        last_pm="12,900", next_pm="2,100", unit_gpbr="55M", corp_class="ULDV",
+        use_code="DR", parts_viewer="N", purchase_date="N/A",
+        in_service_date="03/22/23", branch_type="DAILY RENTAL",
+        adjuster="H675RP – CHEN, AM", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="h67r5p", rpt_gpbr="55UT", dol="03/12/2026", rpt_date="03/13/2026",
+        sidebar_status="pending_ai_review",
+    ),
+    "9912004": _make_detail(
+        "9912004", "2024 Tesla Model 3 LR · GP06 — Jake Moore", "RED", "CA", "TES8820",
+        "5YJ3E1EA1RF123321", "22,100", "22,100",
+        "Front sensor bar damaged. Autopilot camera assembly and front fascia require certified Tesla repair.",
+        "$180.00", "$2,750.00", "$3,230.00", "Below threshold", "$4,000.00",
+        last_pm="19,700", next_pm="2,300", unit_gpbr="39M", corp_class="ELEC",
+        use_code="EV", parts_viewer="Y", purchase_date="11/02/23",
+        in_service_date="11/15/23", branch_type="CORPORATE",
+        adjuster="C440EV – MOORE, JA", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="c44e0v", rpt_gpbr="39CA", dol="02/25/2026", rpt_date="02/26/2026",
+        body_rate="$60.00 / hr", mech_rate="$70.00 / hr", frame_rate="$60.00 / hr",
+        paint_rate="$30.00 / hr",
+        extra_sublets=[
+            {"label": "Tesla scan fee",      "value": "$150.00 flat"},
+            {"label": "ADAS recalibration",  "value": "$950.00 flat"},
+            {"label": "Hazardous waste",     "value": "$5.00 flat"},
+        ],
+        discounts=["EV certified –5%", "OEM Tesla parts –10%"],
+        sidebar_status="ai_approved",
+    ),
+    "3345671": _make_detail(
+        "3345671", "2022 Mazda CX-5 Touring · GP04 — Nina Patel", "BLUE", "GA", "GAM4410",
+        "JM3KFBCM6N0123987", "33,550", "36,200",
+        "Rear quarter panel impact. Door and fender require PDR and repaint. Rear sensor cluster damaged.",
+        "$260.00", "$890.00", "$1,490.00", "Below threshold", "$4,000.00",
+        last_pm="30,800", next_pm="2,200", unit_gpbr="44M", corp_class="UCMR",
+        use_code="DR", parts_viewer="N", purchase_date="06/27/21",
+        in_service_date="07/15/21", branch_type="DAILY RENTAL",
+        adjuster="D770MZ – PATEL, NI", hold_reason="N/A", rpr_hold_reason="N/A",
+        rptd_by="d77m0z", rpt_gpbr="44GA", dol="03/08/2026", rpt_date="03/09/2026",
+        plate_ai_status="flagged", plate_per_ai="FAM4410 · GA",
+        body_rate="$40.00 / hr", mech_rate="$45.00 / hr", frame_rate="$40.00 / hr",
+        paint_rate="$21.00 / hr",
+        discounts=["Foreign parts –15%", "Domestic parts –12%"],
+        alert="Part number mismatch on line 003: submitted OEM vs profile-approved aftermarket.",
+    ),
 }
 
-// ─── Total bar ────────────────────────────────────────────────────────────────
-function renderTotal(total) {
-  const bar     = document.getElementById('totalBar');
-  const amtEl   = document.getElementById('totalAmount');
-  const status  = total.ai_status || 'pending';
-  const flagged = status === 'flagged' && total.amount !== total.amount_per_ai;
-  const pending = status === 'pending';
 
-  // Bar background — three states
-  bar.classList.remove('flagged', 'pending');
-  if (flagged)      bar.classList.add('flagged');
-  else if (pending) bar.classList.add('pending');
+def filter_incidents(search: str = "", status: str = "all") -> List[Dict[str, Any]]:
+    results = INCIDENTS
+    if status != "all":
+        results = [i for i in results if i["status"] == status]
+    if search:
+        s = search.lower()
+        results = [i for i in results if s in i["id"].lower() or s in i["sub_text"].lower()]
+    return results
 
-  // Amount — strike original when flagged, plain otherwise
-  if (flagged) {
-    amtEl.innerHTML =
-      `<span style="text-decoration:line-through;color:rgba(255,255,255,0.38);font-size:20px;margin-right:8px;">${esc(total.amount)}</span>` +
-      `<span>${esc(total.amount_per_ai)}</span>`;
-  } else {
-    amtEl.textContent = total.amount;
-  }
 
-  // Taxes line
-  document.getElementById('totalTaxes').textContent = total.taxes ? 'Taxes: ' + total.taxes : '';
+def compute_ai_statuses(detail: Dict[str, Any]) -> None:
+    """Derive total.ai_status and topbar.status from actual data (mutates detail in-place)."""
+    bd = detail["breakdown"]
 
-  // AI status pill — three states
-  const pillLabel = flagged ? 'AI Flagged' : pending ? 'Pending AI Review' : 'AI Validated';
-  const pillClass = flagged ? 'flagged'   : pending ? 'pending'           : 'approved';
-  document.getElementById('totalPill').innerHTML =
-    `<span class="total-ai-pill ${pillClass}">${pillLabel}</span>`;
+    # Statuses that feed the grand total: line items + all breakdown sections
+    # VIN / plate / odometer do NOT affect the grand total
+    total_statuses: List[Optional[str]] = []
 
-}
+    for li in detail.get("line_items", []):
+        total_statuses.append(li.get("ai_status"))
+        total_statuses.append(li.get("adjustment_ai_status"))
 
-// ─── Rates panel ─────────────────────────────────────────────────────────────
-function renderRatesPanel(rates, sublets, discounts) {
-  document.getElementById('panelLaborRates').innerHTML = rates.map(r =>
-    `<div class="rate-row"><span class="rate-label">${esc(r.label)}</span><span class="rate-val">${esc(r.value)}</span></div>`
-  ).join('');
-  document.getElementById('panelSubletRates').innerHTML = sublets.map(r =>
-    `<div class="rate-row"><span class="rate-label">${esc(r.label)}</span><span class="rate-val">${esc(r.value)}</span></div>`
-  ).join('');
-  document.getElementById('panelDiscounts').innerHTML = discounts.map(d =>
-    `<span class="disc-chip">${esc(d)}</span>`
-  ).join('');
-}
+    for key in ["labor", "parts", "materials", "miscellaneous"]:
+        sec = bd.get(key, {})
+        for item in sec.get("items", []):
+            total_statuses.append(item.get("ai_status"))
+        for sub in sec.get("subsections", []):
+            total_statuses.append(sub.get("subtotal_ai_status"))
+            total_statuses.append(sub.get("adjustment_ai_status"))
 
-// ─── Feedback ─────────────────────────────────────────────────────────────────
-let _fbThumb = null;
-let _fbSection = '';
+    detail["total"]["ai_status"] = _tab_status(total_statuses)
 
-function openFeedback(e, section) {
-  e.stopPropagation();
-  _fbSection = section;
-  _fbThumb = null;
-  document.getElementById('fbText').value = '';
-  document.getElementById('fbThumbUp').className = 'fb-thumb';
-  document.getElementById('fbThumbDown').className = 'fb-thumb';
-  document.getElementById('fbSubmitBtn').disabled = true;
-  document.getElementById('fbForm').style.display = 'block';
-  document.getElementById('fbSubmitted').className = 'fb-submitted';
-  document.getElementById('fbPopTitle').textContent = 'Feedback — ' + section;
+    # Topbar status: grand-total statuses PLUS VIN / plate / odometer
+    vi = detail["vehicle_info"]
+    all_statuses = total_statuses + [
+        vi["vin"]["ai_status"],
+        vi["license_plate"]["ai_status"],
+        vi["odometer"]["ai_status"],
+    ]
+    overall = _tab_status(all_statuses)
+    if overall == "approved":
+        detail["topbar"]["status"] = "AI Validated"
+    elif overall == "flagged":
+        detail["topbar"]["status"] = "AI Flagged"
+    else:
+        detail["topbar"]["status"] = "Pending AI Review"
 
-  const pop = document.getElementById('fbPopover');
-  pop.classList.add('open');
-  const rect = e.currentTarget.getBoundingClientRect();
-  const pw = 280, ph = 260;
-  let top  = rect.bottom + 6;
-  let left = rect.right - pw;
-  if (left < 8) left = 8;
-  if (top + ph > window.innerHeight - 8) top = rect.top - ph - 6;
-  pop.style.top  = top  + 'px';
-  pop.style.left = left + 'px';
-}
 
-function closeFeedback() { document.getElementById('fbPopover').classList.remove('open'); }
-
-function toggleThumb(dir) {
-  _fbThumb = _fbThumb === dir ? null : dir;
-  document.getElementById('fbThumbUp').className   = 'fb-thumb' + (_fbThumb === 'up'   ? ' active-up'   : '');
-  document.getElementById('fbThumbDown').className = 'fb-thumb' + (_fbThumb === 'down' ? ' active-down' : '');
-  document.getElementById('fbSubmitBtn').disabled  = (_fbThumb === null);
-}
-
-async function submitFeedback() {
-  const comment = document.getElementById('fbText').value.trim();
-  try {
-    await fetch('/api/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        incident_id: _currentIncidentId || '',
-        section: _fbSection,
-        rating: _fbThumb,
-        comment: comment,
-      }),
-    });
-  } catch(e) { console.error('feedback error', e); }
-  document.getElementById('fbForm').style.display = 'none';
-  document.getElementById('fbSubmitted').className = 'fb-submitted show';
-  setTimeout(closeFeedback, 1600);
-}
-
-document.addEventListener('click', e => {
-  const pop = document.getElementById('fbPopover');
-  if (pop.classList.contains('open') && !pop.contains(e.target)) closeFeedback();
-});
-
-// ─── Filters & search ─────────────────────────────────────────────────────────
-document.getElementById('filterChips').addEventListener('click', e => {
-  const chip = e.target.closest('.filter-chip');
-  if (!chip) return;
-  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-  chip.classList.add('active');
-  _currentFilter = chip.dataset.status;
-  loadIncidents();
-});
-
-document.getElementById('searchInput').addEventListener('input', () => {
-  clearTimeout(_searchTimer);
-  _searchTimer = setTimeout(loadIncidents, 280);
-});
-
-// ─── Utility ─────────────────────────────────────────────────────────────────
-function esc(s) {
-  if (s == null) return '';
-  return String(s)
-    .replace(/&/g,'&amp;')
-    .replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
-}
-
-// ─── Boot ─────────────────────────────────────────────────────────────────────
-(async () => {
-  const r = await fetch('/api/incidents?status=all');
-  const incidents = await r.json();
-  if (incidents.length) {
-    _currentIncidentId = incidents[0].id;
-    renderSidebar(incidents);
-    await loadIncidentDetail(incidents[0].id);
-  }
-})();
-</script>
-</body>
-</html>
+def get_incident_detail(incident_id: str) -> Optional[Dict[str, Any]]:
+    detail = INCIDENT_DETAILS.get(incident_id)
+    if detail is None:
+        return None
+    # Always recompute derived fields from live data (covers _DETAIL_25437 too)
+    detail = dict(detail)
+    compute_ai_statuses(detail)            # must run first — sets total.ai_status
+    detail["progress_tabs"] = compute_progress_tabs(detail)  # reads total.ai_status
+    vi = detail["vehicle_info"]
+    detail["vehicle_info"]["ai_verified"] = all(
+        f["ai_status"] == "approved"
+        for f in [vi["vin"], vi["license_plate"], vi["odometer"]]
+    )
+    return detail
