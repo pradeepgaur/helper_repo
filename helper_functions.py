@@ -85,8 +85,12 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .topbar-pill { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
 .topbar-pill.green { background: var(--accent-green-light); color: var(--accent-green-dark); border-color: transparent; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
-.btn-status { background: var(--accent-green-light); color: var(--accent-green-dark); font-size: 12px; font-weight: 500; padding: 5px 14px; border-radius: 20px; border: none; cursor: pointer; display: flex; align-items: center; gap: 6px; }
-.status-dot { width: 7px; height: 7px; background: var(--accent-green); border-radius: 50%; }
+.btn-status { background: var(--accent-green-light); color: var(--accent-green-dark); font-size: 12px; font-weight: 500; padding: 5px 14px; border-radius: 20px; border: none; cursor: default; display: flex; align-items: center; gap: 6px; transition: background 0.2s, color 0.2s; }
+.btn-status.ai-flagged { background: var(--red-light); color: var(--red); }
+.btn-status.pending    { background: var(--surface-2);  color: var(--text-2); }
+.status-dot { width: 7px; height: 7px; background: var(--accent-green); border-radius: 50%; transition: background 0.2s; }
+.btn-status.ai-flagged .status-dot { background: var(--red); }
+.btn-status.pending    .status-dot { background: var(--text-3); }
 
 /* ─── STICKY FAB ─── */
 .rates-fab { position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 400; background: var(--navy); color: #fff; font-size: 11.5px; font-weight: 500; font-family: var(--font); border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 10px; border-radius: 10px 0 0 10px; box-shadow: -4px 0 16px rgba(0,0,0,0.2); transition: background 0.15s; white-space: nowrap; letter-spacing: 0.4px; }
@@ -159,7 +163,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .photo-grid-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; display: flex; flex-direction: column; }
 .photo-grid-head { padding: 13px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .photo-grid-head-title { font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
-.photo-grid-body { padding: 14px; flex: 1; overflow-y: auto; max-height: 500px; }
+.photo-grid-body { padding: 14px; flex: 1; overflow-y: auto; max-height: 600px; }
 .photo-grid-body::-webkit-scrollbar { width: 4px; }
 .photo-grid-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
 .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -211,8 +215,6 @@ tr.row-flagged  { background: rgba(212,83,126,0.06) !important; }
 tr.row-approved:hover { background: rgba(29,158,117,0.09) !important; }
 tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
 
-/* ─── ALERT ─── */
-.alert-box { margin: 0 20px 14px; background: var(--red-light); border: 1px solid rgba(212,83,126,0.25); border-radius: var(--radius); padding: 10px 14px; display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--red); }
 
 /* ─── BREAKDOWN ─── */
 .four-col { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
@@ -230,13 +232,21 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
 .bi-pill.approved { background: rgba(29,158,117,0.15); color: #0f6e56; }
 .bi-pill.flagged  { background: rgba(212,83,126,0.15); color: #d4537e; }
 .bi-strike { text-decoration: line-through; color: var(--text-2); margin-right: 4px; }
+.bi-subsection-label { font-size: 10px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; padding: 5px 8px; background: var(--surface-2); border-radius: 6px; margin: 8px 0 4px; }
+.bi-subsection-label:first-child { margin-top: 2px; }
 .bi-corrected { color: #d4537e; font-weight: 600; margin-left: 2px; }
 
 /* ─── TOTAL BAR ─── */
-.total-bar { background: var(--accent-green-dark); border-radius: var(--radius-lg); padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; }
+.total-bar { background: var(--accent-green-dark); border-radius: var(--radius-lg); padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; transition: background 0.2s; }
+.total-bar.flagged { background: #8c2a4e; }
+.total-bar.pending { background: #3a4e62; }
 .total-bar-label { color: rgba(255,255,255,0.6); font-size: 12px; margin-bottom: 3px; }
-.total-bar-val { font-size: 28px; font-weight: 600; color: #fff; font-family: var(--mono); }
-.total-tag { background: var(--accent-green); color: #fff; font-size: 11px; padding: 4px 12px; border-radius: 12px; font-weight: 500; }
+.total-bar-val { font-size: 28px; font-weight: 600; color: #fff; font-family: var(--mono); line-height: 1.15; }
+.total-bar-taxes { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 5px; font-family: var(--mono); }
+.total-ai-pill { display: inline-block; font-size: 11.5px; padding: 4px 14px; border-radius: 12px; font-weight: 500; }
+.total-ai-pill.approved { background: rgba(255,255,255,0.18); color: #fff; }
+.total-ai-pill.flagged  { background: rgba(255,255,255,0.18); color: #ffc8dc; }
+.total-ai-pill.pending  { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.75); }
 
 /* ─── FEEDBACK ─── */
 .fb-btn { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; color: var(--text-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 9px; cursor: pointer; transition: all 0.15s; white-space: nowrap; font-family: var(--font); }
@@ -257,8 +267,9 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
 .fb-textarea::placeholder { color: var(--text-3); }
 .fb-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .fb-cancel { font-size: 12px; font-weight: 500; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; font-family: var(--font); }
-.fb-submit { font-size: 12px; font-weight: 500; padding: 6px 14px; border-radius: 8px; border: none; background: var(--accent-green); color: #fff; cursor: pointer; font-family: var(--font); transition: background 0.15s; }
-.fb-submit:hover { background: var(--accent-green-dark); }
+.fb-submit { font-size: 12px; font-weight: 500; padding: 6px 14px; border-radius: 8px; border: none; background: var(--accent-green); color: #fff; cursor: pointer; font-family: var(--font); transition: background 0.15s, opacity 0.15s; }
+.fb-submit:hover:not(:disabled) { background: var(--accent-green-dark); }
+.fb-submit:disabled { opacity: 0.38; cursor: not-allowed; }
 .fb-submitted { display:none; text-align:center; padding: 8px 0 4px; }
 .fb-submitted.show { display:block; }
 .fb-submitted svg { width: 28px; height: 28px; margin-bottom: 6px; }
@@ -283,12 +294,12 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
     <div><div class="user-name">logged_in_user</div><div class="user-role">Senior Adjuster</div></div>
   </div>
   <div class="sidebar-search">
-    <input class="search-input" id="searchInput" type="text" placeholder="Search by incident number…">
+    <input class="search-input" id="searchInput" type="text" placeholder="Search by repair number…">
   </div>
   <div class="sidebar-filters" id="filterChips">
     <div class="filter-chip active" data-status="all">All</div>
     <div class="filter-chip" data-status="ai_flagged">AI Flagged</div>
-    <div class="filter-chip" data-status="ai_approved">AI Approved</div>
+    <div class="filter-chip" data-status="ai_approved">AI Validated</div>
     <div class="filter-chip" data-status="pending_ai_review">Pending AI Review</div>
   </div>
   <div class="incidents-list" id="incidentsList">
@@ -338,7 +349,7 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
     <div class="topbar">
       <div class="topbar-left">
         <div>
-          <div style="font-size:10px;color:var(--text-3);margin-bottom:2px;text-transform:uppercase;letter-spacing:0.5px;">Incident</div>
+          <div style="font-size:10px;color:var(--text-3);margin-bottom:2px;text-transform:uppercase;letter-spacing:0.5px;">Repair</div>
           <div class="incident-num" id="topbarIncidentNum">#—</div>
         </div>
         <div class="topbar-divider"></div>
@@ -367,7 +378,7 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
   <div class="content">
 
     <!-- VEHICLE INFO + PHOTOS -->
-    <div class="two-col" style="align-items:stretch">
+    <div id="section-vehicle" class="two-col" style="align-items:stretch">
 
       <!-- Vehicle info card -->
       <div class="card">
@@ -422,7 +433,7 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
     </div>
 
     <!-- LINE ITEMS TABLE -->
-    <div class="card">
+    <div id="section-lineitems" class="card">
       <div class="card-head">
         <div class="card-head-title">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1.5" y="1.5" width="11" height="11" rx="2" stroke="var(--accent-green)" stroke-width="1.2"/><path d="M4 5h6M4 7.5h6M4 10h4" stroke="var(--accent-green)" stroke-width="1.2" stroke-linecap="round"/></svg>
@@ -437,21 +448,17 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Line</th><th>Op</th><th>Description</th><th>Type</th><th>Part #</th><th>Price</th><th>Qty</th><th>Labor</th><th>Paint</th><th>AI Status</th></tr>
+            <tr><th>Line</th><th>Op</th><th>Description</th><th>Type</th><th>Part #</th><th>Price</th><th>Adjustment</th><th>Qty</th><th>Labor</th><th>Paint</th><th>AI Status</th></tr>
           </thead>
           <tbody id="lineItemsTbody">
             <!-- populated by JS -->
           </tbody>
         </table>
       </div>
-      <div class="alert-box" id="lineItemsAlert" style="display:none">
-        <span style="font-size:14px;line-height:1.3;flex-shrink:0;">&#9888;</span>
-        <div><strong>Alert:</strong> <span class="alert-content"></span></div>
-      </div>
     </div>
 
     <!-- BREAKDOWN CARDS -->
-    <div class="four-col">
+    <div id="section-breakdown" class="four-col">
       <!-- Labor -->
       <div class="breakdown-card">
         <div class="breakdown-card-head">
@@ -488,7 +495,7 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
       <!-- Miscellaneous -->
       <div class="breakdown-card">
         <div class="breakdown-card-head">
-          <span class="breakdown-card-title">Miscellaneous</span>
+          <span class="breakdown-card-title">Misc</span>
           <div style="display:flex;align-items:center;gap:8px;">
             <span class="breakdown-total-val" id="breakdown-miscellaneous-total">—</span>
             <button class="fb-btn" onclick="openFeedback(event,'Miscellaneous')"><svg viewBox="0 0 14 14" fill="none"><path d="M7 1a6 6 0 100 12A6 6 0 007 1zm0 4v3m0 2h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Feedback</button>
@@ -499,16 +506,18 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
     </div>
 
     <!-- TOTAL BAR -->
-    <div class="total-bar">
+    <div id="section-total">
+    <div class="total-bar" id="totalBar">
       <div>
         <div class="total-bar-label">Total claim before taxes</div>
         <div class="total-bar-val" id="totalAmount">—</div>
+        <div class="total-bar-taxes" id="totalTaxes"></div>
       </div>
       <div style="text-align:right">
-        <div class="total-tag" id="totalTag">—</div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:6px;" id="totalThreshold"></div>
+        <div id="totalPill"></div>
       </div>
     </div>
+    </div><!-- /section-total -->
 
   </div><!-- /content -->
   </div><!-- /main-scroll -->
@@ -534,7 +543,7 @@ tr.row-flagged:hover  { background: rgba(212,83,126,0.11) !important; }
     <textarea class="fb-textarea" id="fbText" placeholder="Share your thoughts on this section…"></textarea>
     <div class="fb-actions">
       <button class="fb-cancel" onclick="closeFeedback()">Cancel</button>
-      <button class="fb-submit" onclick="submitFeedback()">Submit</button>
+      <button class="fb-submit" id="fbSubmitBtn" onclick="submitFeedback()">Submit</button>
     </div>
   </div>
   <div class="fb-submitted" id="fbSubmitted">
@@ -556,12 +565,12 @@ function closePanel() { document.getElementById('slidePanel').classList.remove('
 
 // ─── Sidebar helpers ─────────────────────────────────────────────────────────
 const STATUS_CLASS = { ai_flagged: 's-flagged', ai_approved: 's-approved', pending_ai_review: 's-pending' };
-const STATUS_LABEL = { ai_flagged: 'AI Flagged', ai_approved: 'AI Approved', pending_ai_review: 'Pending AI Review' };
+const STATUS_LABEL = { ai_flagged: 'AI Flagged', ai_approved: 'AI Validated', pending_ai_review: 'Pending AI Review' };
 
 function renderSidebar(incidents) {
   const list = document.getElementById('incidentsList');
   if (!incidents.length) {
-    list.innerHTML = '<div style="padding:20px 18px;color:rgba(255,255,255,0.3);font-size:12px;">No incidents found.</div>';
+    list.innerHTML = '<div style="padding:20px 18px;color:rgba(255,255,255,0.3);font-size:12px;">No repairs found.</div>';
     return;
   }
   list.innerHTML = incidents.map(inc => {
@@ -570,7 +579,7 @@ function renderSidebar(incidents) {
     const sl = STATUS_LABEL[inc.status] || inc.status;
     return `<div class="incident-item${isActive ? ' active' : ''}" onclick="selectIncident('${esc(inc.id)}')">
       <div>
-        <div class="incident-id">Inc# ${esc(inc.id)}</div>
+        <div class="incident-id">Rpr# ${esc(inc.id)}</div>
         <div class="incident-sub">${esc(inc.sub_text)}</div>
       </div>
       <span class="status-pill ${sc}">${sl}</span>
@@ -594,7 +603,7 @@ async function selectIncident(id) {
   _currentIncidentId = id;
   // Update active state immediately
   document.querySelectorAll('.incident-item').forEach(el => {
-    const elId = el.querySelector('.incident-id').textContent.replace('Inc# ','').trim();
+    const elId = el.querySelector('.incident-id').textContent.replace('Rpr# ','').trim();
     el.classList.toggle('active', elId === id);
   });
   await loadIncidentDetail(id);
@@ -625,6 +634,10 @@ function renderTopbar(t) {
   document.getElementById('topbarState').textContent = t.state;
   document.getElementById('topbarPlate').textContent = t.plate;
   document.getElementById('topbarStatus').textContent = t.status;
+  const statusBtn = document.querySelector('.btn-status');
+  statusBtn.classList.remove('ai-flagged', 'pending');
+  if (t.status === 'AI Flagged')        statusBtn.classList.add('ai-flagged');
+  else if (t.status === 'Pending AI Review') statusBtn.classList.add('pending');
 }
 
 // ─── Progress tabs ────────────────────────────────────────────────────────────
@@ -639,12 +652,21 @@ const TAB_CLS = { approved:'t-approved', flagged:'t-flagged', pending:'t-pending
 function renderProgressTabs(tabs) {
   const container = document.getElementById('progressTabs');
   container.innerHTML = tabs.map(tab => {
-    const cls = TAB_CLS[tab.status] || 't-inactive';
-    const icon = TAB_ICONS[tab.status] || '';
+    const cls   = TAB_CLS[tab.status] || 't-inactive';
+    const icon  = TAB_ICONS[tab.status] || '';
     const badge = tab.status !== 'inactive'
       ? `<span class="tab-ai-badge ${tab.status}">AI</span>` : '';
-    return `<div class="ptab ${cls}"><div class="tab-icon ${tab.status}">${icon}</div>${esc(tab.label)}${badge}</div>`;
+    const click = tab.target ? ` onclick="scrollToSection('${tab.target}')"` : '';
+    return `<div class="ptab ${cls}"${click}><div class="tab-icon ${tab.status}">${icon}</div>${esc(tab.label)}${badge}</div>`;
   }).join('');
+}
+
+function scrollToSection(id) {
+  const container = document.querySelector('.main-scroll');
+  const el = document.getElementById(id);
+  if (!el || !container) return;
+  const offset = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
+  container.scrollTo({ top: offset, behavior: 'smooth' });
 }
 
 // ─── Vehicle info ─────────────────────────────────────────────────────────────
@@ -658,7 +680,7 @@ function renderAiFieldCell(field, isLast) {
     : `<div class="est-val" style="font-size:12px;">${esc(field.value)}</div>`;
   const bg    = field.ai_status === 'flagged' ? 'rgba(212,83,126,0.15)' : 'rgba(29,158,117,0.15)';
   const color = field.ai_status === 'flagged' ? '#d4537e' : '#0f6e56';
-  const label = field.ai_status === 'flagged' ? 'AI Flagged' : 'AI Approved';
+  const label = field.ai_status === 'flagged' ? 'AI Flagged' : 'AI Validated';
   return `<div class="est-cell"${isLast ? ' style="border-right:none"' : ''}>
     <div class="est-label">${esc(field.label)}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;">
@@ -743,13 +765,25 @@ document.addEventListener('keydown', e => {
 });
 
 // ─── Line items ───────────────────────────────────────────────────────────────
+function renderAdjCell(item) {
+  if (item.type !== 'N' || !item.adjustment) return '<td></td>';
+  const flagged = item.adjustment_ai_status === 'flagged' && item.adjustment !== item.adjustment_per_ai;
+  if (flagged) {
+    return `<td style="white-space:nowrap;">
+      <span style="text-decoration:line-through;color:var(--text-2);font-size:12.5px;font-family:var(--mono);">${esc(item.adjustment)}</span>
+      <span style="color:#d4537e;font-weight:600;font-size:12.5px;font-family:var(--mono);margin-left:4px;">&rarr;&nbsp;${esc(item.adjustment_per_ai)}</span>
+    </td>`;
+  }
+  return `<td class="mono">${esc(item.adjustment)}</td>`;
+}
+
 function renderLineItems(items, alert) {
   document.getElementById('lineItemsCount').textContent = items.length + ' lines';
   document.getElementById('lineItemsTbody').innerHTML = items.map(item => {
     const rc = item.ai_status === 'approved' ? 'row-approved' : item.ai_status === 'flagged' ? 'row-flagged' : '';
     const lc = item.flag_special ? 'line-flag' : 'mono';
     const pill = item.ai_status
-      ? `<span class="ai-pill ${item.ai_status}">${item.ai_status === 'approved' ? 'AI Approved' : 'AI Flagged'}</span>` : '';
+      ? `<span class="ai-pill ${item.ai_status}">${item.ai_status === 'approved' ? 'AI Validated' : 'AI Flagged'}</span>` : '';
     const typeHtml = item.type ? `<span class="tag-n">${esc(item.type)}</span>` : '';
     const laborCls = item.ai_status === 'approved' && item.labor ? 'labor-hl' : 'mono';
     const priceCls = item.flag_special ? 'price-hl' : 'mono';
@@ -760,6 +794,7 @@ function renderLineItems(items, alert) {
       <td>${typeHtml}</td>
       <td class="mono" style="font-size:11px">${esc(item.part_num||'')}</td>
       <td class="${priceCls}">${esc(item.price||'')}</td>
+      ${renderAdjCell(item)}
       <td>${esc(item.qty||'')}</td>
       <td class="${laborCls}">${esc(item.labor||'')}</td>
       <td class="mono">${esc(item.paint||'')}</td>
@@ -767,43 +802,82 @@ function renderLineItems(items, alert) {
     </tr>`;
   }).join('');
 
-  const alertBox = document.getElementById('lineItemsAlert');
-  if (alert) {
-    alertBox.style.display = 'flex';
-    alertBox.querySelector('.alert-content').textContent = alert;
-  } else {
-    alertBox.style.display = 'none';
-  }
 }
 
 // ─── Breakdown ────────────────────────────────────────────────────────────────
+function _biRow(label, value, valuePai, aiStatus, negative) {
+  const flagged = aiStatus === 'flagged' && value !== valuePai;
+  const valHtml = flagged
+    ? `<span class="bi-strike">${esc(value)}</span><span class="bi-corrected">${esc(valuePai)}</span>`
+    : esc(value);
+  const pill = aiStatus
+    ? `<span class="bi-pill ${aiStatus}">${aiStatus === 'approved' ? 'AI Validated' : 'AI Flagged'}</span>` : '';
+  return `<div class="bi bi-${aiStatus||''}">
+    <span class="bi-label">${esc(label)}</span>
+    <div style="display:flex;align-items:center;gap:7px;">
+      <span class="bi-val${negative ? ' neg' : ''}">${valHtml}</span>
+      ${pill}
+    </div>
+  </div>`;
+}
+
 function renderBreakdown(breakdown) {
   ['labor','parts','materials','miscellaneous'].forEach(key => {
     const sec = breakdown[key];
-    document.getElementById(`breakdown-${key}-total`).textContent = sec.total;
-    document.getElementById(`breakdown-${key}-body`).innerHTML = sec.items.map(item => {
-      const flagged = item.ai_status === 'flagged' && item.value !== item.value_per_ai;
-      const valHtml = flagged
-        ? `<span class="bi-strike">${esc(item.value)}</span><span class="bi-corrected">${esc(item.value_per_ai)}</span>`
-        : esc(item.value);
-      const pill = item.ai_status
-        ? `<span class="bi-pill ${item.ai_status}">${item.ai_status === 'approved' ? 'AI Approved' : 'AI Flagged'}</span>` : '';
-      return `<div class="bi bi-${item.ai_status||''}">
-        <span class="bi-label">${esc(item.label)}</span>
-        <div style="display:flex;align-items:center;gap:7px;">
-          <span class="bi-val${item.negative ? ' neg' : ''}">${valHtml}</span>
-          ${pill}
-        </div>
-      </div>`;
-    }).join('');
+    const totalEl = document.getElementById(`breakdown-${key}-total`);
+    if (sec.total_per_ai && sec.total !== sec.total_per_ai) {
+      totalEl.innerHTML = `<span style="text-decoration:line-through;color:var(--text-2);font-size:16px;margin-right:5px;">${esc(sec.total)}</span><span style="color:#d4537e;">${esc(sec.total_per_ai)}</span>`;
+    } else {
+      totalEl.textContent = sec.total;
+    }
+    const body = document.getElementById(`breakdown-${key}-body`);
+
+    // Parts section: render three subsections if present
+    if (key === 'parts' && sec.subsections) {
+      body.innerHTML = sec.subsections.map(sub => `
+        <div class="bi-subsection-label">${esc(sub.label)}</div>
+        ${_biRow('Subtotal',    sub.subtotal,    sub.subtotal_per_ai,    sub.subtotal_ai_status,    false)}
+        ${_biRow(`Adjustment (${esc(sub.adjustment_label)})`, sub.adjustment, sub.adjustment_per_ai, sub.adjustment_ai_status, true)}
+      `).join('');
+    } else {
+      body.innerHTML = sec.items.map(item =>
+        _biRow(item.label, item.value, item.value_per_ai, item.ai_status, item.negative)
+      ).join('');
+    }
   });
 }
 
 // ─── Total bar ────────────────────────────────────────────────────────────────
 function renderTotal(total) {
-  document.getElementById('totalAmount').textContent = total.amount;
-  document.getElementById('totalTag').textContent = total.tag;
-  document.getElementById('totalThreshold').textContent = 'Threshold: ' + total.threshold;
+  const bar     = document.getElementById('totalBar');
+  const amtEl   = document.getElementById('totalAmount');
+  const status  = total.ai_status || 'pending';
+  const flagged = status === 'flagged' && total.amount !== total.amount_per_ai;
+  const pending = status === 'pending';
+
+  // Bar background — three states
+  bar.classList.remove('flagged', 'pending');
+  if (flagged)      bar.classList.add('flagged');
+  else if (pending) bar.classList.add('pending');
+
+  // Amount — strike original when flagged, plain otherwise
+  if (flagged) {
+    amtEl.innerHTML =
+      `<span style="text-decoration:line-through;color:rgba(255,255,255,0.38);font-size:20px;margin-right:8px;">${esc(total.amount)}</span>` +
+      `<span>${esc(total.amount_per_ai)}</span>`;
+  } else {
+    amtEl.textContent = total.amount;
+  }
+
+  // Taxes line
+  document.getElementById('totalTaxes').textContent = total.taxes ? 'Taxes: ' + total.taxes : '';
+
+  // AI status pill — three states
+  const pillLabel = flagged ? 'AI Flagged' : pending ? 'Pending AI Review' : 'AI Validated';
+  const pillClass = flagged ? 'flagged'   : pending ? 'pending'           : 'approved';
+  document.getElementById('totalPill').innerHTML =
+    `<span class="total-ai-pill ${pillClass}">${pillLabel}</span>`;
+
 }
 
 // ─── Rates panel ─────────────────────────────────────────────────────────────
@@ -830,6 +904,7 @@ function openFeedback(e, section) {
   document.getElementById('fbText').value = '';
   document.getElementById('fbThumbUp').className = 'fb-thumb';
   document.getElementById('fbThumbDown').className = 'fb-thumb';
+  document.getElementById('fbSubmitBtn').disabled = true;
   document.getElementById('fbForm').style.display = 'block';
   document.getElementById('fbSubmitted').className = 'fb-submitted';
   document.getElementById('fbPopTitle').textContent = 'Feedback — ' + section;
@@ -852,6 +927,7 @@ function toggleThumb(dir) {
   _fbThumb = _fbThumb === dir ? null : dir;
   document.getElementById('fbThumbUp').className   = 'fb-thumb' + (_fbThumb === 'up'   ? ' active-up'   : '');
   document.getElementById('fbThumbDown').className = 'fb-thumb' + (_fbThumb === 'down' ? ' active-down' : '');
+  document.getElementById('fbSubmitBtn').disabled  = (_fbThumb === null);
 }
 
 async function submitFeedback() {
