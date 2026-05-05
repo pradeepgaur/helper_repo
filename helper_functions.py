@@ -745,22 +745,26 @@ app.layout = html.Div(className="container", children=[
             html.Div(className="kpi-row", children=[
                 html.Div(className="kpi-card", children=[
                     html.Div("Total Estimates", className="kpi-label"),
-                    html.Div(id="kpi-total",     className="kpi-val"),
+                    dcc.Loading(type="dot", color=EM_GREEN,
+                        children=html.Div(id="kpi-total", className="kpi-val")),
                     html.Div(id="kpi-total-sub", className="kpi-sub"),
                 ]),
                 html.Div(className="kpi-card", children=[
                     html.Div("Estimates Selected", className="kpi-label"),
-                    html.Div(id="kpi-selected",     className="kpi-val"),
+                    dcc.Loading(type="dot", color=EM_GREEN,
+                        children=html.Div(id="kpi-selected", className="kpi-val")),
                     html.Div(id="kpi-selected-sub", className="kpi-sub"),
                 ]),
                 html.Div(className="kpi-card kpi-headline", children=[
                     html.Div("Auto Approval Coverage", className="kpi-label"),
-                    html.Div(id="kpi-coverage",     className="kpi-val"),
+                    dcc.Loading(type="dot", color="#fff",
+                        children=html.Div(id="kpi-coverage", className="kpi-val")),
                     html.Div(id="kpi-coverage-sub", className="kpi-sub"),
                 ]),
                 html.Div(className="kpi-card kpi-headline", children=[
                     html.Div("Auto Approval Precision", className="kpi-label"),
-                    html.Div(id="kpi-precision",     className="kpi-val"),
+                    dcc.Loading(type="dot", color="#fff",
+                        children=html.Div(id="kpi-precision", className="kpi-val")),
                     html.Div(id="kpi-precision-sub", className="kpi-sub"),
                 ]),
             ]),
@@ -769,17 +773,20 @@ app.layout = html.Div(className="container", children=[
             html.Div(className="kpi-row", children=[
                 html.Div(className="kpi-card", children=[
                     html.Div("Total Time Saved", className="kpi-label"),
-                    html.Div(id="kpi-time-saved",     className="kpi-val"),
+                    dcc.Loading(type="dot", color=EM_GREEN,
+                        children=html.Div(id="kpi-time-saved", className="kpi-val")),
                     html.Div(id="kpi-time-saved-sub", className="kpi-sub"),
                 ]),
                 html.Div(className="kpi-card", children=[
                     html.Div("Extra Car Rentable Days", className="kpi-label"),
-                    html.Div(id="kpi-rental-days",     className="kpi-val"),
+                    dcc.Loading(type="dot", color=EM_GREEN,
+                        children=html.Div(id="kpi-rental-days", className="kpi-val")),
                     html.Div(id="kpi-rental-days-sub", className="kpi-sub"),
                 ]),
                 html.Div(className="kpi-card", children=[
                     html.Div("Potential Business Value", className="kpi-label"),
-                    html.Div(id="kpi-biz-value",     className="kpi-val green"),
+                    dcc.Loading(type="dot", color=EM_GREEN,
+                        children=html.Div(id="kpi-biz-value", className="kpi-val green")),
                     html.Div(id="kpi-biz-value-sub", className="kpi-sub"),
                     html.Div(className="kpi-rate-wrap", children=[
                         html.Label("$ per rentable day:", htmlFor="rate-input"),
@@ -790,7 +797,8 @@ app.layout = html.Div(className="container", children=[
                 ]),
                 html.Div(className="kpi-card kpi-risk", children=[
                     html.Div("Estimated Risk", className="kpi-label"),
-                    html.Div(id="kpi-est-risk",     className="kpi-val red"),
+                    dcc.Loading(type="dot", color=RISK,
+                        children=html.Div(id="kpi-est-risk", className="kpi-val red")),
                     html.Div(id="kpi-est-risk-sub", className="kpi-sub"),
                 ]),
             ]),
