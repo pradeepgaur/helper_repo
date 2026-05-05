@@ -1,468 +1,203 @@
--- =============================================================================
--- Repair Estimate Rule Simulator — PostgreSQL functions
---
--- Run this file once on your PostgreSQL server:
---   psql -h <host> -U voadmin -d postgres -f pg_function.sql
---
--- Recommended indexes for performance on large tables:
---   CREATE INDEX IF NOT EXISTS idx_master_recv_dte  ON public.v_t_6mo_master (est_recv_dte);
---   CREATE INDEX IF NOT EXISTS idx_master_vndr_id   ON public.v_t_6mo_master (vr_vndr_id);
---   CREATE INDEX IF NOT EXISTS idx_master_dmg_dsc   ON public.v_t_6mo_master (dmg_dsc);
---   CREATE INDEX IF NOT EXISTS idx_master_state     ON public.v_t_6mo_master (licplte_st);
--- =============================================================================
+"""
+db.py — Database layer for the Repair Estimate Rule Simulator.
 
--- =============================================================================
--- dmg_category  — maps raw damage description text to one of 6 buckets
---
--- HOW TO ADJUST:
---   Run this first to see your actual values:
---     SELECT DISTINCT dmg_dsc, COUNT(*) AS cnt
---     FROM public.v_t_6mo_master
---     WHERE dmg_dsc IS NOT NULL
---     GROUP BY dmg_dsc ORDER BY cnt DESC;
---   Then update the ILIKE patterns below to match your data and re-run this file.
--- =============================================================================
+Manages the SSH tunnel, connection pool, metadata load, and the single
+dashboard query.  Import this module from dashboard.py.
 
-CREATE OR REPLACE FUNCTION public.dmg_category(p_dsc TEXT)
-RETURNS TEXT
-LANGUAGE sql
-IMMUTABLE
-AS $$
-    SELECT CASE
-        WHEN p_dsc ILIKE '%collision%'
-          OR p_dsc ILIKE '%impact%'
-          OR p_dsc ILIKE '%accident%'
-          OR p_dsc ILIKE '%crash%'
-          OR p_dsc ILIKE '%rear%end%'
-          OR p_dsc ILIKE '%front%end%'
-          OR p_dsc ILIKE '%side%swipe%'       THEN 'Collision'
+Usage:
+    import db
+    meta = db.load_metadata()      # called once at startup
+    data = db.query_dashboard(p)   # called on each callback
+"""
 
-        WHEN p_dsc ILIKE '%hail%'
-          OR p_dsc ILIKE '%weather%'
-          OR p_dsc ILIKE '%storm%'
-          OR p_dsc ILIKE '%flood%'
-          OR p_dsc ILIKE '%water%'
-          OR p_dsc ILIKE '%wind%'
-          OR p_dsc ILIKE '%lightning%'        THEN 'Weather / Hail'
+import json
+import psycopg2
+import psycopg2.pool
+from sshtunnel import SSHTunnelForwarder
 
-        WHEN p_dsc ILIKE '%glass%'
-          OR p_dsc ILIKE '%windshield%'
-          OR p_dsc ILIKE '%window%'
-          OR p_dsc ILIKE '%chip%'             THEN 'Glass'
+# ── Connection configuration ──────────────────────────────────────────────────
+SSH_HOST = "10.117.111.4"
+SSH_PORT = 22
+SSH_USER = "e64d24"
+SSH_KEY  = r"C:\Users\E64D24\.ssh\id_ed25519"
 
-        WHEN p_dsc ILIKE '%theft%'
-          OR p_dsc ILIKE '%stolen%'
-          OR p_dsc ILIKE '%vandal%'
-          OR p_dsc ILIKE '%malicious%'
-          OR p_dsc ILIKE '%break%in%'
-          OR p_dsc ILIKE '%tamper%'           THEN 'Theft / Vandalism'
+DB_HOST  = "vodev-db.postgres.database.azure.com"
+DB_PORT  = 5432
+DB_NAME  = "postgres"
+DB_USER  = "voadmin"
+DB_PASS  = "This-password-is-not-secure"
 
-        WHEN p_dsc ILIKE '%fire%'
-          OR p_dsc ILIKE '%burn%'
-          OR p_dsc ILIKE '%smoke%'            THEN 'Fire'
-
-        ELSE 'Other'
-    END
-$$;
-
-CREATE OR REPLACE FUNCTION public.fn_dashboard_agg(
-    p_start_date        DATE,
-    p_end_date          DATE,
-    p_vendor_start_date DATE,
-    p_vendor_end_date   DATE,
-    p_cost_min          NUMERIC,
-    p_cost_max          NUMERIC,   -- pass 999999 to mean "no upper cap"
-    p_labor_min         NUMERIC,
-    p_labor_max         NUMERIC,   -- pass 9999   to mean "no upper cap"
-    p_line_min          INTEGER,
-    p_line_max          INTEGER,   -- pass 9999   to mean "no upper cap"
-    p_acc_min           NUMERIC,   -- 0 = no filter (vendor first pass percentile)
-    p_prior_min         INTEGER,   -- 0 = no filter (min vendor history)
-    p_states            TEXT[],    -- NULL = all states
-    p_dmg_types         TEXT[],    -- NULL = all damage types
-    p_elec              TEXT,      -- 'any' | 'Y' | 'N'
-    p_bulk              TEXT       -- 'any' | 'Y' | 'N'
+# ── Open SSH tunnel (kept alive for the lifetime of the process) ──────────────
+print("Opening SSH tunnel…")
+_tunnel = SSHTunnelForwarder(
+    (SSH_HOST, SSH_PORT),
+    ssh_username=SSH_USER,
+    ssh_pkey=SSH_KEY,
+    remote_bind_address=(DB_HOST, DB_PORT),
 )
-RETURNS JSON
-LANGUAGE plpgsql
-STABLE
-AS $func$
-DECLARE
-    v_result JSON;
-BEGIN
+_tunnel.start()
+print(f"  SSH tunnel open — localhost:{_tunnel.local_bind_port} → {DB_HOST}:{DB_PORT}")
 
-WITH
+# Send a keepalive packet every 60 s so the SSH server never drops the idle tunnel.
+# This is the #1 cause of "Broken pipe" errors after a few minutes of inactivity.
+_tunnel._transport.set_keepalive(60)
 
--- ── 1a. Vendor approval rates from vendor date window ───────────────────────
---        rvsn_nbr = 1  →  estimate passed on first revision (first pass)
---        Only vendors with >= 10 estimates are ranked; others get percentile 0
-vendor_rates AS (
-    SELECT
-        vr_vndr_id,
-        COUNT(*)                                                             AS total_estimates,
-        SUM(CASE WHEN rvsn_nbr::NUMERIC = 1 THEN 1 ELSE 0 END)::NUMERIC
-            / COUNT(*)                                                       AS vendor_approval_rate
-    FROM public.v_t_6mo_master
-    WHERE est_recv_dte::DATE BETWEEN p_vendor_start_date AND p_vendor_end_date
-    GROUP BY vr_vndr_id
-    HAVING COUNT(*) >= GREATEST(p_prior_min, 1)
-),
-
--- ── 1b. Percentile rank each vendor by their approval rate ──────────────────
---        PERCENT_RANK() returns 0.0 (lowest) → 1.0 (highest)
-vendor_percentiles AS (
-    SELECT
-        vr_vndr_id,
-        total_estimates,
-        PERCENT_RANK() OVER (ORDER BY vendor_approval_rate) AS vendor_percentile
-    FROM vendor_rates
-),
-
--- ── 2. Base = data date window only (used for "Total" bars in charts) ────────
-base AS (
-    SELECT
-        m.est_id,
-        COALESCE(m.est_tot_amt::NUMERIC,          0)  AS est_tot_amt,
-        COALESCE(m.lbr_hr_qty::NUMERIC,           0)  AS lbr_hr_qty,
-        COALESCE(m.line_item_count::INTEGER,       0)  AS line_item_count,
-        COALESCE(m.time_to_approve_hours::NUMERIC, 0)  AS time_to_approve_hours,
-        public.dmg_category(m.dmg_dsc::TEXT)          AS dmg_dsc,
-        UPPER(TRIM(m.licplte_st::TEXT))               AS licplte_st,
-        m.rvsn_nbr::INTEGER                           AS rvsn_nbr,
-        m.is_electronic_est_ind::TEXT                 AS is_electronic_est_ind,
-        m.is_bulk_ind::TEXT                           AS is_bulk_ind,
-        m.vr_vndr_id,
-        COALESCE(vs.total_estimates,   0)             AS vendor_est_count,
-        COALESCE(vs.vendor_percentile, 0.0)           AS vendor_percentile
-    FROM public.v_t_6mo_master m
-    LEFT JOIN vendor_percentiles vs ON m.vr_vndr_id = vs.vr_vndr_id
-    WHERE m.est_recv_dte::DATE BETWEEN p_start_date AND p_end_date
-),
-
--- ── 3. Filtered = base + all sidebar filters ─────────────────────────────────
-filtered AS (
-    SELECT * FROM base
-    WHERE
-        est_tot_amt    >= p_cost_min
-        AND est_tot_amt    <= p_cost_max
-        AND lbr_hr_qty >= p_labor_min
-        AND lbr_hr_qty <= p_labor_max
-        AND line_item_count >= p_line_min
-        AND line_item_count <= p_line_max
-        AND (p_acc_min   = 0 OR vendor_percentile     >= p_acc_min)
-        AND (p_prior_min = 0 OR vendor_est_count     >= p_prior_min)
-        AND (p_states    IS NULL
-             OR array_length(p_states, 1) IS NULL
-             OR licplte_st = ANY(p_states))
-        AND (p_dmg_types IS NULL
-             OR array_length(p_dmg_types, 1) IS NULL
-             OR dmg_dsc = ANY(p_dmg_types))
-        AND (p_elec = 'any' OR is_electronic_est_ind = p_elec)
-        AND (p_bulk = 'any' OR is_bulk_ind = p_bulk)
-),
-
--- ── 4. KPIs ──────────────────────────────────────────────────────────────────
-kpis AS (
-    SELECT
-        (SELECT COUNT(*) FROM base)                                           AS n_date,
-        COUNT(*)                                                              AS n,
-        SUM(CASE WHEN rvsn_nbr = 1  THEN 1 ELSE 0 END)                       AS n_rev1,
-        SUM(CASE WHEN rvsn_nbr > 1  THEN 1 ELSE 0 END)                       AS n_rev_gt1,
-        COALESCE(SUM(CASE WHEN rvsn_nbr = 1
-                     THEN time_to_approve_hours ELSE 0 END), 0)               AS time_saved_hrs,
-        AVG(CASE WHEN rvsn_nbr = 1  THEN est_tot_amt ELSE NULL END)           AS mean_correct_amt,
-        AVG(CASE WHEN rvsn_nbr > 1  THEN est_tot_amt ELSE NULL END)           AS mean_wrong_amt
-    FROM filtered
-),
-
--- ── 5a. Amount histogram ─────────────────────────────────────────────────────
-amt_buckets AS (
-    SELECT
-        CASE
-            WHEN est_tot_amt <   250 THEN 1
-            WHEN est_tot_amt <   500 THEN 2
-            WHEN est_tot_amt <   750 THEN 3
-            WHEN est_tot_amt <  1000 THEN 4
-            WHEN est_tot_amt <  1500 THEN 5
-            WHEN est_tot_amt <  2500 THEN 6
-            ELSE 7
-        END                                                                   AS ord,
-        CASE
-            WHEN est_tot_amt <   250 THEN '$0-250'
-            WHEN est_tot_amt <   500 THEN '$250-500'
-            WHEN est_tot_amt <   750 THEN '$500-750'
-            WHEN est_tot_amt <  1000 THEN '$750-1k'
-            WHEN est_tot_amt <  1500 THEN '$1k-1.5k'
-            WHEN est_tot_amt <  2500 THEN '$1.5k-2.5k'
-            ELSE '$2.5k+'
-        END                                                                   AS bucket,
-        COUNT(*)                                                              AS total,
-        0                                                                     AS filtered
-    FROM base GROUP BY 1, 2
-    UNION ALL
-    SELECT
-        CASE
-            WHEN est_tot_amt <   250 THEN 1
-            WHEN est_tot_amt <   500 THEN 2
-            WHEN est_tot_amt <   750 THEN 3
-            WHEN est_tot_amt <  1000 THEN 4
-            WHEN est_tot_amt <  1500 THEN 5
-            WHEN est_tot_amt <  2500 THEN 6
-            ELSE 7
-        END,
-        CASE
-            WHEN est_tot_amt <   250 THEN '$0-250'
-            WHEN est_tot_amt <   500 THEN '$250-500'
-            WHEN est_tot_amt <   750 THEN '$500-750'
-            WHEN est_tot_amt <  1000 THEN '$750-1k'
-            WHEN est_tot_amt <  1500 THEN '$1k-1.5k'
-            WHEN est_tot_amt <  2500 THEN '$1.5k-2.5k'
-            ELSE '$2.5k+'
-        END,
-        0,
-        COUNT(*)
-    FROM filtered GROUP BY 1, 2
-),
-hist_amt AS (
-    SELECT ord, bucket,
-           SUM(total)    AS total,
-           SUM(filtered) AS filtered
-    FROM amt_buckets GROUP BY ord, bucket
-),
-
--- ── 5b. Labour hours histogram ───────────────────────────────────────────────
-labor_buckets AS (
-    SELECT
-        CASE
-            WHEN lbr_hr_qty <  2 THEN 1 WHEN lbr_hr_qty <  4 THEN 2
-            WHEN lbr_hr_qty <  6 THEN 3 WHEN lbr_hr_qty <  8 THEN 4
-            WHEN lbr_hr_qty < 12 THEN 5 WHEN lbr_hr_qty < 16 THEN 6
-            WHEN lbr_hr_qty < 24 THEN 7 WHEN lbr_hr_qty < 48 THEN 8
-            ELSE 9
-        END ord,
-        CASE
-            WHEN lbr_hr_qty <  2 THEN '0-2'   WHEN lbr_hr_qty <  4 THEN '2-4'
-            WHEN lbr_hr_qty <  6 THEN '4-6'   WHEN lbr_hr_qty <  8 THEN '6-8'
-            WHEN lbr_hr_qty < 12 THEN '8-12'  WHEN lbr_hr_qty < 16 THEN '12-16'
-            WHEN lbr_hr_qty < 24 THEN '16-24' WHEN lbr_hr_qty < 48 THEN '24-48'
-            ELSE '48+'
-        END bucket,
-        COUNT(*) total, 0 filtered
-    FROM base GROUP BY 1,2
-    UNION ALL
-    SELECT
-        CASE
-            WHEN lbr_hr_qty <  2 THEN 1 WHEN lbr_hr_qty <  4 THEN 2
-            WHEN lbr_hr_qty <  6 THEN 3 WHEN lbr_hr_qty <  8 THEN 4
-            WHEN lbr_hr_qty < 12 THEN 5 WHEN lbr_hr_qty < 16 THEN 6
-            WHEN lbr_hr_qty < 24 THEN 7 WHEN lbr_hr_qty < 48 THEN 8
-            ELSE 9
-        END,
-        CASE
-            WHEN lbr_hr_qty <  2 THEN '0-2'   WHEN lbr_hr_qty <  4 THEN '2-4'
-            WHEN lbr_hr_qty <  6 THEN '4-6'   WHEN lbr_hr_qty <  8 THEN '6-8'
-            WHEN lbr_hr_qty < 12 THEN '8-12'  WHEN lbr_hr_qty < 16 THEN '12-16'
-            WHEN lbr_hr_qty < 24 THEN '16-24' WHEN lbr_hr_qty < 48 THEN '24-48'
-            ELSE '48+'
-        END,
-        0, COUNT(*)
-    FROM filtered GROUP BY 1,2
-),
-hist_labor AS (
-    SELECT ord, bucket, SUM(total) total, SUM(filtered) filtered
-    FROM labor_buckets GROUP BY ord, bucket
-),
-
--- ── 5c. Line items histogram ─────────────────────────────────────────────────
-lines_buckets AS (
-    SELECT
-        CASE
-            WHEN line_item_count <  4 THEN 1 WHEN line_item_count <  6 THEN 2
-            WHEN line_item_count <  8 THEN 3 WHEN line_item_count < 12 THEN 4
-            WHEN line_item_count < 16 THEN 5 WHEN line_item_count < 20 THEN 6
-            WHEN line_item_count < 24 THEN 7 WHEN line_item_count < 30 THEN 8
-            WHEN line_item_count < 40 THEN 9 ELSE 10
-        END ord,
-        CASE
-            WHEN line_item_count <  4 THEN '0-4'   WHEN line_item_count <  6 THEN '4-6'
-            WHEN line_item_count <  8 THEN '6-8'   WHEN line_item_count < 12 THEN '8-12'
-            WHEN line_item_count < 16 THEN '12-16' WHEN line_item_count < 20 THEN '16-20'
-            WHEN line_item_count < 24 THEN '20-24' WHEN line_item_count < 30 THEN '24-30'
-            WHEN line_item_count < 40 THEN '30-40' ELSE '40+'
-        END bucket,
-        COUNT(*) total, 0 filtered
-    FROM base GROUP BY 1,2
-    UNION ALL
-    SELECT
-        CASE
-            WHEN line_item_count <  4 THEN 1 WHEN line_item_count <  6 THEN 2
-            WHEN line_item_count <  8 THEN 3 WHEN line_item_count < 12 THEN 4
-            WHEN line_item_count < 16 THEN 5 WHEN line_item_count < 20 THEN 6
-            WHEN line_item_count < 24 THEN 7 WHEN line_item_count < 30 THEN 8
-            WHEN line_item_count < 40 THEN 9 ELSE 10
-        END,
-        CASE
-            WHEN line_item_count <  4 THEN '0-4'   WHEN line_item_count <  6 THEN '4-6'
-            WHEN line_item_count <  8 THEN '6-8'   WHEN line_item_count < 12 THEN '8-12'
-            WHEN line_item_count < 16 THEN '12-16' WHEN line_item_count < 20 THEN '16-20'
-            WHEN line_item_count < 24 THEN '20-24' WHEN line_item_count < 30 THEN '24-30'
-            WHEN line_item_count < 40 THEN '30-40' ELSE '40+'
-        END,
-        0, COUNT(*)
-    FROM filtered GROUP BY 1,2
-),
-hist_lines AS (
-    SELECT ord, bucket, SUM(total) total, SUM(filtered) filtered
-    FROM lines_buckets GROUP BY ord, bucket
-),
-
--- ── 5d. Time to approve histogram ────────────────────────────────────────────
-time_buckets AS (
-    SELECT
-        CASE
-            WHEN time_to_approve_hours <  2 THEN 1 WHEN time_to_approve_hours <  4 THEN 2
-            WHEN time_to_approve_hours <  8 THEN 3 WHEN time_to_approve_hours < 16 THEN 4
-            WHEN time_to_approve_hours < 24 THEN 5 WHEN time_to_approve_hours < 48 THEN 6
-            WHEN time_to_approve_hours < 72 THEN 7 ELSE 8
-        END ord,
-        CASE
-            WHEN time_to_approve_hours <  2 THEN '0-2'   WHEN time_to_approve_hours <  4 THEN '2-4'
-            WHEN time_to_approve_hours <  8 THEN '4-8'   WHEN time_to_approve_hours < 16 THEN '8-16'
-            WHEN time_to_approve_hours < 24 THEN '16-24' WHEN time_to_approve_hours < 48 THEN '24-48'
-            WHEN time_to_approve_hours < 72 THEN '48-72' ELSE '72+'
-        END bucket,
-        COUNT(*) total, 0 filtered
-    FROM base GROUP BY 1,2
-    UNION ALL
-    SELECT
-        CASE
-            WHEN time_to_approve_hours <  2 THEN 1 WHEN time_to_approve_hours <  4 THEN 2
-            WHEN time_to_approve_hours <  8 THEN 3 WHEN time_to_approve_hours < 16 THEN 4
-            WHEN time_to_approve_hours < 24 THEN 5 WHEN time_to_approve_hours < 48 THEN 6
-            WHEN time_to_approve_hours < 72 THEN 7 ELSE 8
-        END,
-        CASE
-            WHEN time_to_approve_hours <  2 THEN '0-2'   WHEN time_to_approve_hours <  4 THEN '2-4'
-            WHEN time_to_approve_hours <  8 THEN '4-8'   WHEN time_to_approve_hours < 16 THEN '8-16'
-            WHEN time_to_approve_hours < 24 THEN '16-24' WHEN time_to_approve_hours < 48 THEN '24-48'
-            WHEN time_to_approve_hours < 72 THEN '48-72' ELSE '72+'
-        END,
-        0, COUNT(*)
-    FROM filtered GROUP BY 1,2
-),
-hist_time AS (
-    SELECT ord, bucket, SUM(total) total, SUM(filtered) filtered
-    FROM time_buckets GROUP BY ord, bucket
-),
-
--- ── 6. Damage type counts ─────────────────────────────────────────────────────
-dmg_counts AS (
-    SELECT
-        b.dmg_dsc,
-        b.total,
-        COALESCE(f.filtered, 0) AS filtered
-    FROM (SELECT dmg_dsc, COUNT(*) total   FROM base     WHERE dmg_dsc IS NOT NULL GROUP BY dmg_dsc) b
-    LEFT JOIN
-         (SELECT dmg_dsc, COUNT(*) filtered FROM filtered WHERE dmg_dsc IS NOT NULL GROUP BY dmg_dsc) f
-    ON b.dmg_dsc = f.dmg_dsc
-),
-
--- ── 7. State counts (filtered only, for bubble map) ──────────────────────────
-state_counts AS (
-    SELECT
-        licplte_st                             AS state,
-        COUNT(*)                               AS cnt
-    FROM filtered
-    WHERE licplte_st IS NOT NULL
-      AND licplte_st ~ '^[A-Z]{2}$'
-    GROUP BY licplte_st
-),
-
--- ── 8. Box plot stats by damage type ─────────────────────────────────────────
-box_base AS (
-    SELECT
-        dmg_dsc,
-        MIN(est_tot_amt)                                                      AS bmin,
-        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY est_tot_amt)             AS q1,
-        PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY est_tot_amt)             AS median,
-        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY est_tot_amt)             AS q3,
-        MAX(est_tot_amt)                                                      AS bmax
-    FROM base
-    WHERE dmg_dsc IS NOT NULL
-    GROUP BY dmg_dsc
-),
-box_filt AS (
-    SELECT
-        dmg_dsc,
-        MIN(est_tot_amt)                                                      AS bmin,
-        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY est_tot_amt)             AS q1,
-        PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY est_tot_amt)             AS median,
-        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY est_tot_amt)             AS q3,
-        MAX(est_tot_amt)                                                      AS bmax
-    FROM filtered
-    WHERE dmg_dsc IS NOT NULL
-    GROUP BY dmg_dsc
+# ── Connection pool (thread-safe; Dash can run callbacks concurrently) ─────────
+_pool = psycopg2.pool.ThreadedConnectionPool(
+    minconn=1,
+    maxconn=5,
+    host="localhost",
+    port=_tunnel.local_bind_port,
+    database=DB_NAME,
+    user=DB_USER,
+    password=DB_PASS,
+    connect_timeout=15,
+    # TCP-level keepalives — keeps the DB connection alive through
+    # firewalls/NAT even when no queries are running.
+    keepalives=1,
+    keepalives_idle=60,      # start probing after 60 s of inactivity
+    keepalives_interval=10,  # retry probe every 10 s
+    keepalives_count=5,      # drop connection after 5 missed probes
 )
+print("  Connection pool ready.")
 
--- ── Assemble all sections into a single JSON object ───────────────────────────
-SELECT json_build_object(
 
-    'kpis', (SELECT row_to_json(k) FROM kpis k),
+def _get():
+    """Borrow a connection from the pool.
+    If the connection is broken (e.g. tunnel was idle), reset it so
+    psycopg2 hands back a fresh one rather than raising an error."""
+    conn = _pool.getconn()
+    try:
+        conn.isolation_level          # fast attribute check
+        if conn.closed:
+            raise psycopg2.OperationalError("closed")
+        # Cheap ping — rolls back any stale transaction state too
+        conn.cursor().execute("SELECT 1")
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _pool.putconn(conn)           # return the dead one
+        conn = _pool.getconn()        # get a fresh one
+    return conn
 
-    'hist_amt', (
-        SELECT json_agg(row_to_json(r) ORDER BY r.ord)
-        FROM hist_amt r
-    ),
-    'hist_labor', (
-        SELECT json_agg(row_to_json(r) ORDER BY r.ord)
-        FROM hist_labor r
-    ),
-    'hist_lines', (
-        SELECT json_agg(row_to_json(r) ORDER BY r.ord)
-        FROM hist_lines r
-    ),
-    'hist_time', (
-        SELECT json_agg(row_to_json(r) ORDER BY r.ord)
-        FROM hist_time r
-    ),
 
-    'dmg_counts', (
-        SELECT json_agg(row_to_json(r) ORDER BY r.total DESC)
-        FROM dmg_counts r
-    ),
+def _put(conn):
+    """Return a connection to the pool."""
+    _pool.putconn(conn)
 
-    'state_counts', (
-        SELECT json_agg(row_to_json(r))
-        FROM state_counts r
-    ),
 
-    'box_base', (
-        SELECT json_agg(json_build_object(
-            'dmg_dsc', b.dmg_dsc,
-            'q1',      b.q1,
-            'median',  b.median,
-            'q3',      b.q3,
-            'lf',      GREATEST(b.bmin, b.q1 - 1.5 * (b.q3 - b.q1)),
-            'uf',      LEAST(b.bmax,   b.q3 + 1.5 * (b.q3 - b.q1))
-        ))
-        FROM box_base b
-    ),
+# ── Metadata — loaded once at startup ─────────────────────────────────────────
+def load_metadata() -> dict:
+    """
+    Returns:
+        all_dmg        : sorted list of distinct damage type strings
+        all_states     : sorted list of distinct 2-letter state codes
+        data_min_date  : earliest est_recv_dte (date object)
+        data_max_date  : latest  est_recv_dte (date object)
+        total_records  : total row count
+        vendor_hist_max: highest per-vendor estimate count (for slider max)
+    """
+    conn = _get()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                /* distinct damage categories (max 6 buckets) */
+                ARRAY(
+                    SELECT DISTINCT public.dmg_category(dmg_dsc::TEXT)
+                    FROM   public.v_t_6mo_master
+                    WHERE  dmg_dsc IS NOT NULL
+                    ORDER  BY 1
+                )                                       AS all_dmg,
 
-    'box_filt', (
-        SELECT json_agg(json_build_object(
-            'dmg_dsc', f.dmg_dsc,
-            'q1',      f.q1,
-            'median',  f.median,
-            'q3',      f.q3,
-            'lf',      GREATEST(f.bmin, f.q1 - 1.5 * (f.q3 - f.q1)),
-            'uf',      LEAST(f.bmax,   f.q3 + 1.5 * (f.q3 - f.q1))
-        ))
-        FROM box_filt f
+                /* distinct 2-letter state codes */
+                ARRAY(
+                    SELECT DISTINCT UPPER(TRIM(licplte_st::TEXT))
+                    FROM   public.v_t_6mo_master
+                    WHERE  licplte_st IS NOT NULL
+                      AND  UPPER(TRIM(licplte_st::TEXT)) ~ '^[A-Z]{2}$'
+                    ORDER  BY 1
+                )                                       AS all_states,
+
+                MIN(est_recv_dte)::DATE                 AS data_min_date,
+                MAX(est_recv_dte)::DATE                 AS data_max_date,
+                COUNT(*)                                AS total_records,
+
+                /* max per-vendor estimate count — for Prior History slider */
+                (
+                    SELECT MAX(vc) FROM (
+                        SELECT COUNT(*) AS vc
+                        FROM   public.v_t_6mo_master
+                        GROUP  BY vr_vndr_id
+                    ) t
+                )                                       AS vendor_hist_max
+
+            FROM public.v_t_6mo_master
+        """)
+        row = cur.fetchone()
+        cur.close()
+        return {
+            "all_dmg":         row[0] or [],
+            "all_states":      row[1] or [],
+            "data_min_date":   row[2],
+            "data_max_date":   row[3],
+            "total_records":   int(row[4]),
+            "vendor_hist_max": int(row[5] or 100),
+        }
+    finally:
+        _put(conn)
+
+
+# ── Dashboard query — called on every callback ─────────────────────────────────
+_QUERY = """
+    SELECT public.fn_dashboard_agg(
+        %(p_start_date)s,
+        %(p_end_date)s,
+        %(p_vendor_start_date)s,
+        %(p_vendor_end_date)s,
+        %(p_cost_min)s,
+        %(p_cost_max)s,
+        %(p_labor_min)s,
+        %(p_labor_max)s,
+        %(p_line_min)s,
+        %(p_line_max)s,
+        %(p_acc_min)s,
+        %(p_prior_min)s,
+        %(p_states)s,
+        %(p_dmg_types)s,
+        %(p_elec)s,
+        %(p_bulk)s
     )
+"""
 
-) INTO v_result;
 
-RETURN v_result;
+def query_dashboard(params: dict) -> dict:
+    """
+    Call fn_dashboard_agg with the filter parameters dict.
+    Returns a plain Python dict parsed from the returned JSON.
 
-END;
-$func$;
+    Expected keys in params:
+        p_start_date, p_end_date, p_vendor_start_date, p_vendor_end_date,
+        p_cost_min, p_cost_max, p_labor_min, p_labor_max,
+        p_line_min, p_line_max, p_acc_min, p_prior_min,
+        p_states (list[str] | None), p_dmg_types (list[str] | None),
+        p_elec ('any'|'Y'|'N'), p_bulk ('any'|'Y'|'N')
+    """
+    conn = _get()
+    try:
+        cur = conn.cursor()
+        cur.execute(_QUERY, params)
+        result = cur.fetchone()[0]
+        cur.close()
+        # psycopg2 may return a dict (if using RealDictCursor) or a string
+        if isinstance(result, str):
+            return json.loads(result)
+        return result or {}
+    except Exception as exc:
+        # Roll back so the connection is reusable
+        conn.rollback()
+        raise exc
+    finally:
+        _put(conn)
