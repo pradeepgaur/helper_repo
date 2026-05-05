@@ -1,6 +1,5 @@
 -- =============================================================================
--- fn_dashboard_agg
--- Repair Estimate Rule Simulator — aggregation function
+-- Repair Estimate Rule Simulator — PostgreSQL functions
 --
 -- Run this file once on your PostgreSQL server:
 --   psql -h <host> -U voadmin -d postgres -f pg_function.sql
@@ -11,6 +10,60 @@
 --   CREATE INDEX IF NOT EXISTS idx_master_dmg_dsc   ON public.v_t_6mo_master (dmg_dsc);
 --   CREATE INDEX IF NOT EXISTS idx_master_state     ON public.v_t_6mo_master (licplte_st);
 -- =============================================================================
+
+-- =============================================================================
+-- dmg_category  — maps raw damage description text to one of 6 buckets
+--
+-- HOW TO ADJUST:
+--   Run this first to see your actual values:
+--     SELECT DISTINCT dmg_dsc, COUNT(*) AS cnt
+--     FROM public.v_t_6mo_master
+--     WHERE dmg_dsc IS NOT NULL
+--     GROUP BY dmg_dsc ORDER BY cnt DESC;
+--   Then update the ILIKE patterns below to match your data and re-run this file.
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION public.dmg_category(p_dsc TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT CASE
+        WHEN p_dsc ILIKE '%collision%'
+          OR p_dsc ILIKE '%impact%'
+          OR p_dsc ILIKE '%accident%'
+          OR p_dsc ILIKE '%crash%'
+          OR p_dsc ILIKE '%rear%end%'
+          OR p_dsc ILIKE '%front%end%'
+          OR p_dsc ILIKE '%side%swipe%'       THEN 'Collision'
+
+        WHEN p_dsc ILIKE '%hail%'
+          OR p_dsc ILIKE '%weather%'
+          OR p_dsc ILIKE '%storm%'
+          OR p_dsc ILIKE '%flood%'
+          OR p_dsc ILIKE '%water%'
+          OR p_dsc ILIKE '%wind%'
+          OR p_dsc ILIKE '%lightning%'        THEN 'Weather / Hail'
+
+        WHEN p_dsc ILIKE '%glass%'
+          OR p_dsc ILIKE '%windshield%'
+          OR p_dsc ILIKE '%window%'
+          OR p_dsc ILIKE '%chip%'             THEN 'Glass'
+
+        WHEN p_dsc ILIKE '%theft%'
+          OR p_dsc ILIKE '%stolen%'
+          OR p_dsc ILIKE '%vandal%'
+          OR p_dsc ILIKE '%malicious%'
+          OR p_dsc ILIKE '%break%in%'
+          OR p_dsc ILIKE '%tamper%'           THEN 'Theft / Vandalism'
+
+        WHEN p_dsc ILIKE '%fire%'
+          OR p_dsc ILIKE '%burn%'
+          OR p_dsc ILIKE '%smoke%'            THEN 'Fire'
+
+        ELSE 'Other'
+    END
+$$;
 
 CREATE OR REPLACE FUNCTION public.fn_dashboard_agg(
     p_start_date        DATE,
@@ -59,7 +112,7 @@ base AS (
         COALESCE(m.lbr_hr_qty::NUMERIC,           0)  AS lbr_hr_qty,
         COALESCE(m.line_item_count::INTEGER,       0)  AS line_item_count,
         COALESCE(m.time_to_approve_hours::NUMERIC, 0)  AS time_to_approve_hours,
-        m.dmg_dsc::TEXT                               AS dmg_dsc,
+        public.dmg_category(m.dmg_dsc::TEXT)          AS dmg_dsc,
         UPPER(TRIM(m.licplte_st::TEXT))               AS licplte_st,
         m.repr_auth_stat_typ_cde,
         m.rvsn_nbr::INTEGER                           AS rvsn_nbr,
