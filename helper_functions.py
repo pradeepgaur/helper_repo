@@ -128,14 +128,12 @@ base AS (
         COALESCE(m.time_to_approve_hours::NUMERIC, 0)  AS time_to_approve_hours,
         public.dmg_category(m.dmg_dsc::TEXT)          AS dmg_dsc,
         UPPER(TRIM(m.licplte_st::TEXT))               AS licplte_st,
-        m.repr_auth_stat_typ_cde,
         m.rvsn_nbr::INTEGER                           AS rvsn_nbr,
         m.is_electronic_est_ind::TEXT                 AS is_electronic_est_ind,
         m.is_bulk_ind::TEXT                           AS is_bulk_ind,
         m.vr_vndr_id,
         COALESCE(vs.total_estimates,   0)             AS vendor_est_count,
-        COALESCE(vs.vendor_percentile, 0.0)           AS vendor_percentile,
-        (m.repr_auth_stat_typ_cde = 'A')              AS auto_approved
+        COALESCE(vs.vendor_percentile, 0.0)           AS vendor_percentile
     FROM public.v_t_6mo_master m
     LEFT JOIN vendor_percentiles vs ON m.vr_vndr_id = vs.vr_vndr_id
     WHERE m.est_recv_dte::DATE BETWEEN p_start_date AND p_end_date
@@ -169,11 +167,11 @@ kpis AS (
         (SELECT COUNT(*) FROM base)                                           AS n_date,
         COUNT(*)                                                              AS n,
         SUM(CASE WHEN rvsn_nbr = 1  THEN 1 ELSE 0 END)                       AS n_rev1,
-        SUM(CASE WHEN auto_approved THEN 1 ELSE 0 END)                        AS n_appr,
-        COALESCE(SUM(CASE WHEN auto_approved
+        SUM(CASE WHEN rvsn_nbr > 1  THEN 1 ELSE 0 END)                       AS n_rev_gt1,
+        COALESCE(SUM(CASE WHEN rvsn_nbr = 1
                      THEN time_to_approve_hours ELSE 0 END), 0)               AS time_saved_hrs,
         AVG(CASE WHEN rvsn_nbr = 1  THEN est_tot_amt ELSE NULL END)           AS mean_correct_amt,
-        AVG(CASE WHEN rvsn_nbr <> 1 THEN est_tot_amt ELSE NULL END)           AS mean_wrong_amt
+        AVG(CASE WHEN rvsn_nbr > 1  THEN est_tot_amt ELSE NULL END)           AS mean_wrong_amt
     FROM filtered
 ),
 
