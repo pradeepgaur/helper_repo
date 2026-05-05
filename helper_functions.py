@@ -658,9 +658,9 @@ app.layout = html.Div(className="container", children=[
                 ]),
                 dcc.Slider(
                     id="prior-slider",
-                    min=0, max=VENDOR_HIST_MAX, step=max(1, VENDOR_HIST_MAX // 20),
+                    min=0, max=150, step=10,
                     value=0,
-                    marks=_hist_marks(VENDOR_HIST_MAX),
+                    marks={0: "0", 50: "50", 100: "100", 150: "150+"},
                     tooltip={"always_visible": False},
                     updatemode="mouseup",
                 ),
@@ -1120,7 +1120,7 @@ def update_all(cost_r, labor_r, line_r, acc_min, prior_min,
                  f"{'60+ hr' if labor_r[1] >= 60 else f'{labor_r[1]} hr'}")
     line_lbl  = f"{line_r[0]} – {'13+' if line_r[1] >= 13 else line_r[1]}"
     acc_lbl   = "" if acc_min == 0 else f"≥ {acc_min*100:.0f}%"
-    prior_lbl = "" if prior_min == 0 else f"≥ {prior_min:,}"
+    prior_lbl = "" if prior_min == 0 else f"≥ {'150+' if prior_min >= 150 else f'{prior_min:,}'}"
 
     # ── Query PostgreSQL ──────────────────────────────────────────────────────
     active = active_dmg if active_dmg else ALL_DMG
@@ -1136,7 +1136,7 @@ def update_all(cost_r, labor_r, line_r, acc_min, prior_min,
         p_line_min          = int(line_r[0]),
         p_line_max          = 9_999     if line_r[1]  >= 13   else int(line_r[1]),
         p_acc_min           = float(acc_min),
-        p_prior_min         = int(prior_min),
+        p_prior_min         = int(prior_min) if prior_min < 150 else 150,
         p_states            = state_vals if state_vals and len(state_vals) < len(ALL_STATES) else None,
         p_dmg_types         = active     if len(active) < len(ALL_DMG)                       else None,
         p_elec              = elec_val,
