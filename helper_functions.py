@@ -24,10 +24,7 @@
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION public.dmg_category(p_dsc TEXT)
-RETURNS TEXT
-LANGUAGE sql
-IMMUTABLE
-AS $$
+RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
     SELECT CASE
         WHEN p_dsc ILIKE '%collision%'
           OR p_dsc ILIKE '%impact%'
@@ -125,7 +122,28 @@ base AS (
         COALESCE(m.est_tot_amt::NUMERIC,          0)  AS est_tot_amt,
         COALESCE(m.lbr_hr_qty::NUMERIC,           0)  AS lbr_hr_qty,
         COALESCE(m.line_item_count::INTEGER,       0)  AS line_item_count,
-        COALESCE(m.time_to_approve_hours::NUMERIC, 0)  AS time_to_approve_hours,
+        --COALESCE(m.time_to_approve_hours::NUMERIC, 0)  AS time_to_approve_hours,
+        -- Pradeep applying logic to handle negative and very big positive values
+        ROUND(CASE 
+            WHEN COALESCE(m.time_to_approve_hours::NUMERIC, 0) <= 0 
+            THEN 0 ELSE CASE 
+                            WHEN COALESCE(m.time_to_approve_hours::NUMERIC, 0) >= 96 
+                            THEN 96 
+                            ELSE COALESCE(m.time_to_approve_hours::NUMERIC, 0) 
+                        END
+            END,0)
+        AS time_to_approve_hours,
+        CASE 
+            WHEN COALESCE(EXTRACT(DAY FROM (apprv_dte - est_recv_dte)), 0) <= 0 
+            THEN 0 ELSE CASE 
+                            WHEN COALESCE(EXTRACT(DAY FROM (apprv_dte - est_recv_dte)),0) >= 4 
+                            THEN 4 
+                            ELSE COALESCE(EXTRACT(DAY FROM (apprv_dte - est_recv_dte)),0)
+                        END
+            END
+        AS time_to_approve_days,
+
+        -- end
         m.est_recv_dte::DATE                           AS est_recv_dte,
         m.apprv_dte::DATE                              AS apprv_dte,
         public.dmg_category(m.dmg_dsc::TEXT)          AS dmg_dsc,
@@ -159,7 +177,7 @@ filtered AS (
         AND (p_dmg_types IS NULL
              OR array_length(p_dmg_types, 1) IS NULL
              OR dmg_dsc = ANY(p_dmg_types))
-        AND (p_elec = 'any' OR is_electronic_est_ind = p_elec)
+        AND (p_elec = 'any' OR is_electronic_est_ind = p_elec) -- check these
         AND (p_bulk = 'any' OR is_bulk_ind = p_bulk)
 ),
 
@@ -173,10 +191,14 @@ kpis AS (
         COALESCE(SUM(CASE WHEN rvsn_nbr = 1
                      THEN time_to_approve_hours ELSE 0 END), 0)               AS time_saved_hrs,
         COALESCE(SUM(CASE WHEN rvsn_nbr = 1
-                     THEN (apprv_dte - est_recv_dte)
+                     THEN time_to_approve_days
                      ELSE 0 END), 0)                                          AS time_saved_days,
         AVG(CASE WHEN rvsn_nbr = 1  THEN est_tot_amt ELSE NULL END)           AS mean_correct_amt,
-        AVG(CASE WHEN rvsn_nbr > 1  THEN est_tot_amt ELSE NULL END)           AS mean_wrong_amt
+        AVG(CASE WHEN rvsn_nbr > 1  THEN est_tot_amt ELSE NULL END)           AS mean_wrong_amt,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY est_tot_amt)
+            FILTER (WHERE rvsn_nbr = 1)                                       AS median_correct_amt,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY est_tot_amt)
+            FILTER (WHERE rvsn_nbr > 1)                                       AS median_wrong_amt
     FROM filtered
 ),
 
