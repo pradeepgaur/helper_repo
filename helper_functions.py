@@ -1,103 +1,473 @@
-# ─────────────────────────────────────────────
-# 9.  CORRELATION CHARTS
-# ─────────────────────────────────────────────
-print("\n── Correlation charts ───────────────────")
+-- =============================================================================
+-- Repair Estimate Rule Simulator — PostgreSQL functions
+--
+-- Run this file once on your PostgreSQL server:
+--   psql -h <host> -U voadmin -d postgres -f pg_function.sql
+--
+-- Recommended indexes for performance on large tables:
+--   CREATE INDEX IF NOT EXISTS idx_master_recv_dte  ON public.v_t_6mo_master (est_recv_dte);
+--   CREATE INDEX IF NOT EXISTS idx_master_vndr_id   ON public.v_t_6mo_master (vr_vndr_id);
+--   CREATE INDEX IF NOT EXISTS idx_master_dmg_dsc   ON public.v_t_6mo_master (dmg_dsc);
+--   CREATE INDEX IF NOT EXISTS idx_master_state     ON public.v_t_6mo_master (licplte_st);
+-- =============================================================================
 
-try:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import matplotlib.ticker as mticker
-    from scipy import stats
+-- =============================================================================
+-- dmg_category  — maps raw damage description text to one of 6 buckets
+--
+-- HOW TO ADJUST:
+--   Run this first to see your actual values:
+--     SELECT DISTINCT dmg_dsc, COUNT(*) AS cnt
+--     FROM public.v_t_6mo_master
+--     WHERE dmg_dsc IS NOT NULL
+--     GROUP BY dmg_dsc ORDER BY cnt DESC;
+--   Then update the ILIKE patterns below to match your data and re-run this file.
+-- =============================================================================
 
-    CHART_PATH = OUTPUT_PATH.replace(".xlsx", "_correlation_charts.png")
+CREATE OR REPLACE FUNCTION public.dmg_category(p_dsc TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT CASE
+        WHEN p_dsc ILIKE '%collision%'
+          OR p_dsc ILIKE '%impact%'
+          OR p_dsc ILIKE '%accident%'
+          OR p_dsc ILIKE '%crash%'
+          OR p_dsc ILIKE '%rear%end%'
+          OR p_dsc ILIKE '%front%end%'
+          OR p_dsc ILIKE '%side%swipe%'       THEN 'Collision'
 
-    BG="#0d1117"; SURF="161b22"; BORDER="#2a3444"
-    GOLD="#e0a84b"; BLUE="#58a6ff"; GREEN="#3fb950"
-    AMBER="#d29922"; MUTED="#7a8899"; WHITE="#f0f4f8"
+        WHEN p_dsc ILIKE '%hail%'
+          OR p_dsc ILIKE '%weather%'
+          OR p_dsc ILIKE '%storm%'
+          OR p_dsc ILIKE '%flood%'
+          OR p_dsc ILIKE '%water%'
+          OR p_dsc ILIKE '%wind%'
+          OR p_dsc ILIKE '%lightning%'        THEN 'Weather / Hail'
 
-    plt.rcParams.update({
-        "figure.facecolor":BG, "axes.facecolor":SURF,
-        "axes.edgecolor":BORDER, "axes.labelcolor":MUTED,
-        "axes.titlecolor":WHITE, "text.color":WHITE,
-        "xtick.color":MUTED, "ytick.color":MUTED,
-        "grid.color":BORDER, "grid.linestyle":"--",
-        "grid.alpha":0.4, "font.family":"monospace", "figure.dpi":150,
-    })
+        WHEN p_dsc ILIKE '%glass%'
+          OR p_dsc ILIKE '%windshield%'
+          OR p_dsc ILIKE '%window%'
+          OR p_dsc ILIKE '%chip%'             THEN 'Glass'
 
-    tier_map = {"insufficient_history":0,"low":1,"below_avg":2,"above_avg":3,"trusted":4}
-    df["vendor_tier_num"] = df["vendor_tier"].map(tier_map)
+        WHEN p_dsc ILIKE '%theft%'
+          OR p_dsc ILIKE '%stolen%'
+          OR p_dsc ILIKE '%vandal%'
+          OR p_dsc ILIKE '%malicious%'
+          OR p_dsc ILIKE '%break%in%'
+          OR p_dsc ILIKE '%tamper%'           THEN 'Theft / Vandalism'
 
-    rvsn_cap = int(df["rvsn_nbr"].quantile(0.99))
-    plot_df  = df[df["rvsn_nbr"] <= rvsn_cap].copy()
+        WHEN p_dsc ILIKE '%fire%'
+          OR p_dsc ILIKE '%burn%'
+          OR p_dsc ILIKE '%smoke%'            THEN 'Fire'
 
-    charts = [
-        {"y_col":"vendor_tier_num","y_label":"Vendor tier","title":"Vendor tier vs revision number",
-         "color":GOLD,"jitter":0.08,"cap_y":None,"yticks":[0,1,2,3,4],
-         "ylabels":["insuff.","low","below\navg","above\navg","trusted"]},
-        {"y_col":"line_item_count","y_label":"Line item count","title":"Line items vs revision number",
-         "color":BLUE,"jitter":0.15,"cap_y":99,"yticks":None,"ylabels":None},
-        {"y_col":"est_tot_amt","y_label":"Estimate total ($)","title":"Estimate amount vs revision number",
-         "color":GREEN,"jitter":0.15,"cap_y":99,"yticks":None,"ylabels":None},
-        {"y_col":"lbr_hr_qty","y_label":"Labour hours","title":"Labour hours vs revision number",
-         "color":AMBER,"jitter":0.15,"cap_y":99,"yticks":None,"ylabels":None},
-    ]
+        ELSE 'Other'
+    END
+$$;
 
-    fig, axes = plt.subplots(2, 2, figsize=(9, 8), constrained_layout=True)
-    fig.patch.set_facecolor(BG)
-    fig.suptitle("Correlation: revision number vs approval drivers",
-                 color=WHITE, fontsize=13, fontweight="bold", y=1.02)
+CREATE OR REPLACE FUNCTION public.fn_dashboard_agg(
+    p_start_date        DATE,
+    p_end_date          DATE,
+    p_vendor_start_date DATE,
+    p_vendor_end_date   DATE,
+    p_cost_min          NUMERIC,
+    p_cost_max          NUMERIC,   -- pass 999999 to mean "no upper cap"
+    p_labor_min         NUMERIC,
+    p_labor_max         NUMERIC,   -- pass 9999   to mean "no upper cap"
+    p_line_min          INTEGER,
+    p_line_max          INTEGER,   -- pass 9999   to mean "no upper cap"
+    p_acc_min           NUMERIC,   -- 0 = no filter (vendor first pass percentile)
+    p_prior_min         INTEGER,   -- 0 = no filter (min vendor history)
+    p_states            TEXT[],    -- NULL = all states
+    p_dmg_types         TEXT[],    -- NULL = all damage types
+    p_elec              TEXT,      -- 'any' | 'Y' | 'N'
+    p_bulk              TEXT       -- 'any' | 'Y' | 'N'
+)
+RETURNS JSON
+LANGUAGE plpgsql
+STABLE
+AS $func$
+DECLARE
+    v_result JSON;
+BEGIN
 
-    rng = np.random.default_rng(42)
-    corr_rows = []
+WITH
 
-    for ax, cfg in zip(axes.flatten(), charts):
-        col = cfg["y_col"]; color = cfg["color"]
-        sub = plot_df[["rvsn_nbr", col]].dropna().copy()
-        if cfg["cap_y"] is not None:
-            sub = sub[sub[col] <= sub[col].quantile(cfg["cap_y"]/100)]
-        x = sub["rvsn_nbr"].values.astype(float)
-        y = sub[col].values.astype(float)
-        r, p_val             = stats.pearsonr(x, y)
-        slope, intercept, *_ = stats.linregress(x, y)
-        corr_rows.append({"variable":col,"correlation_with_rvsn_nbr":round(r,4),
-                           "slope":round(slope,4),"p_value":round(p_val,6),"n":len(sub)})
-        x_line = np.linspace(x.min(), x.max(), 300)
-        y_line = slope * x_line + intercept
-        x_jit  = x + rng.uniform(-cfg["jitter"], cfg["jitter"], size=len(x))
-        ax.scatter(x_jit, y, color=color, alpha=0.15, s=5, linewidths=0, rasterized=True)
-        means = sub.groupby("rvsn_nbr")[col].mean()
-        ax.plot(means.index, means.values, color=color, alpha=0.6,
-                linewidth=1.4, linestyle="--", label="Mean per revision")
-        ax.plot(x_line, y_line, color=WHITE, linewidth=2.2, linestyle="-",
-                label=f"Trend  slope={slope:+.2f}")
-        sig = "***" if p_val < 0.001 else ("**" if p_val < 0.01 else "*")
-        ax.text(0.97, 0.95, f"r = {r:+.3f}{sig}\nslope = {slope:+.3f}",
-                transform=ax.transAxes, ha="right", va="top", fontsize=9, color=color,
-                bbox=dict(boxstyle="round,pad=0.35", facecolor=SURF,
-                          edgecolor=color, alpha=0.88))
-        ax.set_title(cfg["title"], color=WHITE, fontsize=10, pad=7)
-        ax.set_xlabel("Revision number (rvsn_nbr)", color=MUTED, fontsize=9)
-        ax.set_ylabel(cfg["y_label"], color=MUTED, fontsize=9)
-        ax.set_xlim(x.min()-0.4, x.max()+0.4)
-        ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
-        ax.grid(True)
-        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-        ax.spines["left"].set_color(BORDER); ax.spines["bottom"].set_color(BORDER)
-        if cfg["yticks"] is not None:
-            ax.set_yticks(cfg["yticks"])
-            ax.set_yticklabels(cfg["ylabels"], fontsize=8, color=MUTED)
-        ax.legend(fontsize=8, frameon=True, framealpha=0.6, labelcolor=WHITE,
-                  facecolor=SURF, edgecolor=BORDER, loc="lower right")
+-- ── 1a. Vendor approval rates from vendor date window ───────────────────────
+--        rvsn_nbr = 1  →  estimate passed on first revision (first pass)
+--        Only vendors with >= 10 estimates are ranked; others get percentile 0
+vendor_rates AS (
+    SELECT
+        vr_vndr_id,
+        COUNT(*)                                                             AS total_estimates,
+        SUM(CASE WHEN rvsn_nbr::NUMERIC = 1 THEN 1 ELSE 0 END)::NUMERIC
+            / COUNT(*)                                                       AS vendor_approval_rate
+    FROM public.v_t_6mo_master
+    WHERE est_recv_dte::DATE BETWEEN p_vendor_start_date AND p_vendor_end_date
+    GROUP BY vr_vndr_id
+    HAVING COUNT(*) >= GREATEST(p_prior_min, 1)
+),
 
-    fig.text(0.5, -0.01,
-             "*** p<0.001  |  dashed = mean per revision  |  solid white = OLS trendline",
-             ha="center", fontsize=8, color=MUTED)
-    plt.savefig(CHART_PATH, dpi=150, bbox_inches="tight", facecolor=BG)
-    plt.close()
-    corr_chart_df = pd.DataFrame(corr_rows)
-    print(f"   Saved: {CHART_PATH}")
+-- ── 1b. Percentile rank each vendor by their approval rate ──────────────────
+--        PERCENT_RANK() returns 0.0 (lowest) → 1.0 (highest)
+vendor_percentiles AS (
+    SELECT
+        vr_vndr_id,
+        total_estimates,
+        PERCENT_RANK() OVER (ORDER BY vendor_approval_rate) AS vendor_percentile
+    FROM vendor_rates
+),
 
-except ImportError as e:
-    print(f"   Skipping charts — install matplotlib and scipy: {e}")
-    corr_chart_df = pd.DataFrame()
+-- ── 2. Base = data date window only (used for "Total" bars in charts) ────────
+base AS (
+    SELECT
+        m.est_id,
+        COALESCE(m.est_tot_amt::NUMERIC,          0)  AS est_tot_amt,
+        COALESCE(m.lbr_hr_qty::NUMERIC,           0)  AS lbr_hr_qty,
+        COALESCE(m.line_item_count::INTEGER,       0)  AS line_item_count,
+        COALESCE(m.time_to_approve_hours::NUMERIC, 0)  AS time_to_approve_hours,
+        m.est_recv_dte::DATE                           AS est_recv_dte,
+        m.apprv_dte::DATE                              AS apprv_dte,
+        public.dmg_category(m.dmg_dsc::TEXT)          AS dmg_dsc,
+        UPPER(TRIM(m.licplte_st::TEXT))               AS licplte_st,
+        m.rvsn_nbr::INTEGER                           AS rvsn_nbr,
+        m.is_electronic_est_ind::TEXT                 AS is_electronic_est_ind,
+        m.is_bulk_ind::TEXT                           AS is_bulk_ind,
+        m.vr_vndr_id,
+        COALESCE(vs.total_estimates,   0)             AS vendor_est_count,
+        COALESCE(vs.vendor_percentile, 0.0)           AS vendor_percentile
+    FROM public.v_t_6mo_master m
+    LEFT JOIN vendor_percentiles vs ON m.vr_vndr_id = vs.vr_vndr_id
+    WHERE m.est_recv_dte::DATE BETWEEN p_start_date AND p_end_date
+),
+
+-- ── 3. Filtered = base + all sidebar filters ─────────────────────────────────
+filtered AS (
+    SELECT * FROM base
+    WHERE
+        est_tot_amt    >= p_cost_min
+        AND est_tot_amt    <= p_cost_max
+        AND lbr_hr_qty >= p_labor_min
+        AND lbr_hr_qty <= p_labor_max
+        AND line_item_count >= p_line_min
+        AND line_item_count <= p_line_max
+        AND (p_acc_min   = 0 OR vendor_percentile     >= p_acc_min)
+        AND (p_prior_min = 0 OR vendor_est_count     >= p_prior_min)
+        AND (p_states    IS NULL
+             OR array_length(p_states, 1) IS NULL
+             OR licplte_st = ANY(p_states))
+        AND (p_dmg_types IS NULL
+             OR array_length(p_dmg_types, 1) IS NULL
+             OR dmg_dsc = ANY(p_dmg_types))
+        AND (p_elec = 'any' OR is_electronic_est_ind = p_elec)
+        AND (p_bulk = 'any' OR is_bulk_ind = p_bulk)
+),
+
+-- ── 4. KPIs ──────────────────────────────────────────────────────────────────
+kpis AS (
+    SELECT
+        (SELECT COUNT(*) FROM base)                                           AS n_date,
+        COUNT(*)                                                              AS n,
+        SUM(CASE WHEN rvsn_nbr = 1  THEN 1 ELSE 0 END)                       AS n_rev1,
+        SUM(CASE WHEN rvsn_nbr > 1  THEN 1 ELSE 0 END)                       AS n_rev_gt1,
+        COALESCE(SUM(CASE WHEN rvsn_nbr = 1
+                     THEN time_to_approve_hours ELSE 0 END), 0)               AS time_saved_hrs,
+        COALESCE(SUM(CASE WHEN rvsn_nbr = 1
+                     THEN (apprv_dte - est_recv_dte)
+                     ELSE 0 END), 0)                                          AS time_saved_days,
+        AVG(CASE WHEN rvsn_nbr = 1  THEN est_tot_amt ELSE NULL END)           AS mean_correct_amt,
+        AVG(CASE WHEN rvsn_nbr > 1  THEN est_tot_amt ELSE NULL END)           AS mean_wrong_amt
+    FROM filtered
+),
+
+-- ── 5a. Amount histogram ─────────────────────────────────────────────────────
+amt_buckets AS (
+    SELECT
+        CASE
+            WHEN est_tot_amt <   250 THEN 1
+            WHEN est_tot_amt <   500 THEN 2
+            WHEN est_tot_amt <   750 THEN 3
+            WHEN est_tot_amt <  1000 THEN 4
+            WHEN est_tot_amt <  1500 THEN 5
+            WHEN est_tot_amt <  2500 THEN 6
+            ELSE 7
+        END                                                                   AS ord,
+        CASE
+            WHEN est_tot_amt <   250 THEN '$0-250'
+            WHEN est_tot_amt <   500 THEN '$250-500'
+            WHEN est_tot_amt <   750 THEN '$500-750'
+            WHEN est_tot_amt <  1000 THEN '$750-1k'
+            WHEN est_tot_amt <  1500 THEN '$1k-1.5k'
+            WHEN est_tot_amt <  2500 THEN '$1.5k-2.5k'
+            ELSE '$2.5k+'
+        END                                                                   AS bucket,
+        COUNT(*)                                                              AS total,
+        0                                                                     AS filtered
+    FROM base GROUP BY 1, 2
+    UNION ALL
+    SELECT
+        CASE
+            WHEN est_tot_amt <   250 THEN 1
+            WHEN est_tot_amt <   500 THEN 2
+            WHEN est_tot_amt <   750 THEN 3
+            WHEN est_tot_amt <  1000 THEN 4
+            WHEN est_tot_amt <  1500 THEN 5
+            WHEN est_tot_amt <  2500 THEN 6
+            ELSE 7
+        END,
+        CASE
+            WHEN est_tot_amt <   250 THEN '$0-250'
+            WHEN est_tot_amt <   500 THEN '$250-500'
+            WHEN est_tot_amt <   750 THEN '$500-750'
+            WHEN est_tot_amt <  1000 THEN '$750-1k'
+            WHEN est_tot_amt <  1500 THEN '$1k-1.5k'
+            WHEN est_tot_amt <  2500 THEN '$1.5k-2.5k'
+            ELSE '$2.5k+'
+        END,
+        0,
+        COUNT(*)
+    FROM filtered GROUP BY 1, 2
+),
+hist_amt AS (
+    SELECT ord, bucket,
+           SUM(total)    AS total,
+           SUM(filtered) AS filtered
+    FROM amt_buckets GROUP BY ord, bucket
+),
+
+-- ── 5b. Labour hours histogram ───────────────────────────────────────────────
+labor_buckets AS (
+    SELECT
+        CASE
+            WHEN lbr_hr_qty <  2 THEN 1 WHEN lbr_hr_qty <  4 THEN 2
+            WHEN lbr_hr_qty <  6 THEN 3 WHEN lbr_hr_qty <  8 THEN 4
+            WHEN lbr_hr_qty < 12 THEN 5 WHEN lbr_hr_qty < 16 THEN 6
+            WHEN lbr_hr_qty < 24 THEN 7 WHEN lbr_hr_qty < 48 THEN 8
+            ELSE 9
+        END ord,
+        CASE
+            WHEN lbr_hr_qty <  2 THEN '0-2'   WHEN lbr_hr_qty <  4 THEN '2-4'
+            WHEN lbr_hr_qty <  6 THEN '4-6'   WHEN lbr_hr_qty <  8 THEN '6-8'
+            WHEN lbr_hr_qty < 12 THEN '8-12'  WHEN lbr_hr_qty < 16 THEN '12-16'
+            WHEN lbr_hr_qty < 24 THEN '16-24' WHEN lbr_hr_qty < 48 THEN '24-48'
+            ELSE '48+'
+        END bucket,
+        COUNT(*) total, 0 filtered
+    FROM base GROUP BY 1,2
+    UNION ALL
+    SELECT
+        CASE
+            WHEN lbr_hr_qty <  2 THEN 1 WHEN lbr_hr_qty <  4 THEN 2
+            WHEN lbr_hr_qty <  6 THEN 3 WHEN lbr_hr_qty <  8 THEN 4
+            WHEN lbr_hr_qty < 12 THEN 5 WHEN lbr_hr_qty < 16 THEN 6
+            WHEN lbr_hr_qty < 24 THEN 7 WHEN lbr_hr_qty < 48 THEN 8
+            ELSE 9
+        END,
+        CASE
+            WHEN lbr_hr_qty <  2 THEN '0-2'   WHEN lbr_hr_qty <  4 THEN '2-4'
+            WHEN lbr_hr_qty <  6 THEN '4-6'   WHEN lbr_hr_qty <  8 THEN '6-8'
+            WHEN lbr_hr_qty < 12 THEN '8-12'  WHEN lbr_hr_qty < 16 THEN '12-16'
+            WHEN lbr_hr_qty < 24 THEN '16-24' WHEN lbr_hr_qty < 48 THEN '24-48'
+            ELSE '48+'
+        END,
+        0, COUNT(*)
+    FROM filtered GROUP BY 1,2
+),
+hist_labor AS (
+    SELECT ord, bucket, SUM(total) total, SUM(filtered) filtered
+    FROM labor_buckets GROUP BY ord, bucket
+),
+
+-- ── 5c. Line items histogram ─────────────────────────────────────────────────
+lines_buckets AS (
+    SELECT
+        CASE
+            WHEN line_item_count <  4 THEN 1 WHEN line_item_count <  6 THEN 2
+            WHEN line_item_count <  8 THEN 3 WHEN line_item_count < 12 THEN 4
+            WHEN line_item_count < 16 THEN 5 WHEN line_item_count < 20 THEN 6
+            WHEN line_item_count < 24 THEN 7 WHEN line_item_count < 30 THEN 8
+            WHEN line_item_count < 40 THEN 9 ELSE 10
+        END ord,
+        CASE
+            WHEN line_item_count <  4 THEN '0-4'   WHEN line_item_count <  6 THEN '4-6'
+            WHEN line_item_count <  8 THEN '6-8'   WHEN line_item_count < 12 THEN '8-12'
+            WHEN line_item_count < 16 THEN '12-16' WHEN line_item_count < 20 THEN '16-20'
+            WHEN line_item_count < 24 THEN '20-24' WHEN line_item_count < 30 THEN '24-30'
+            WHEN line_item_count < 40 THEN '30-40' ELSE '40+'
+        END bucket,
+        COUNT(*) total, 0 filtered
+    FROM base GROUP BY 1,2
+    UNION ALL
+    SELECT
+        CASE
+            WHEN line_item_count <  4 THEN 1 WHEN line_item_count <  6 THEN 2
+            WHEN line_item_count <  8 THEN 3 WHEN line_item_count < 12 THEN 4
+            WHEN line_item_count < 16 THEN 5 WHEN line_item_count < 20 THEN 6
+            WHEN line_item_count < 24 THEN 7 WHEN line_item_count < 30 THEN 8
+            WHEN line_item_count < 40 THEN 9 ELSE 10
+        END,
+        CASE
+            WHEN line_item_count <  4 THEN '0-4'   WHEN line_item_count <  6 THEN '4-6'
+            WHEN line_item_count <  8 THEN '6-8'   WHEN line_item_count < 12 THEN '8-12'
+            WHEN line_item_count < 16 THEN '12-16' WHEN line_item_count < 20 THEN '16-20'
+            WHEN line_item_count < 24 THEN '20-24' WHEN line_item_count < 30 THEN '24-30'
+            WHEN line_item_count < 40 THEN '30-40' ELSE '40+'
+        END,
+        0, COUNT(*)
+    FROM filtered GROUP BY 1,2
+),
+hist_lines AS (
+    SELECT ord, bucket, SUM(total) total, SUM(filtered) filtered
+    FROM lines_buckets GROUP BY ord, bucket
+),
+
+-- ── 5d. Time to approve histogram ────────────────────────────────────────────
+time_buckets AS (
+    SELECT
+        CASE
+            WHEN time_to_approve_hours <  2 THEN 1 WHEN time_to_approve_hours <  4 THEN 2
+            WHEN time_to_approve_hours <  8 THEN 3 WHEN time_to_approve_hours < 16 THEN 4
+            WHEN time_to_approve_hours < 24 THEN 5 WHEN time_to_approve_hours < 48 THEN 6
+            WHEN time_to_approve_hours < 72 THEN 7 ELSE 8
+        END ord,
+        CASE
+            WHEN time_to_approve_hours <  2 THEN '0-2'   WHEN time_to_approve_hours <  4 THEN '2-4'
+            WHEN time_to_approve_hours <  8 THEN '4-8'   WHEN time_to_approve_hours < 16 THEN '8-16'
+            WHEN time_to_approve_hours < 24 THEN '16-24' WHEN time_to_approve_hours < 48 THEN '24-48'
+            WHEN time_to_approve_hours < 72 THEN '48-72' ELSE '72+'
+        END bucket,
+        COUNT(*) total, 0 filtered
+    FROM base GROUP BY 1,2
+    UNION ALL
+    SELECT
+        CASE
+            WHEN time_to_approve_hours <  2 THEN 1 WHEN time_to_approve_hours <  4 THEN 2
+            WHEN time_to_approve_hours <  8 THEN 3 WHEN time_to_approve_hours < 16 THEN 4
+            WHEN time_to_approve_hours < 24 THEN 5 WHEN time_to_approve_hours < 48 THEN 6
+            WHEN time_to_approve_hours < 72 THEN 7 ELSE 8
+        END,
+        CASE
+            WHEN time_to_approve_hours <  2 THEN '0-2'   WHEN time_to_approve_hours <  4 THEN '2-4'
+            WHEN time_to_approve_hours <  8 THEN '4-8'   WHEN time_to_approve_hours < 16 THEN '8-16'
+            WHEN time_to_approve_hours < 24 THEN '16-24' WHEN time_to_approve_hours < 48 THEN '24-48'
+            WHEN time_to_approve_hours < 72 THEN '48-72' ELSE '72+'
+        END,
+        0, COUNT(*)
+    FROM filtered GROUP BY 1,2
+),
+hist_time AS (
+    SELECT ord, bucket, SUM(total) total, SUM(filtered) filtered
+    FROM time_buckets GROUP BY ord, bucket
+),
+
+-- ── 6. Damage type counts ─────────────────────────────────────────────────────
+dmg_counts AS (
+    SELECT
+        b.dmg_dsc,
+        b.total,
+        COALESCE(f.filtered, 0) AS filtered
+    FROM (SELECT dmg_dsc, COUNT(*) total   FROM base     WHERE dmg_dsc IS NOT NULL GROUP BY dmg_dsc) b
+    LEFT JOIN
+         (SELECT dmg_dsc, COUNT(*) filtered FROM filtered WHERE dmg_dsc IS NOT NULL GROUP BY dmg_dsc) f
+    ON b.dmg_dsc = f.dmg_dsc
+),
+
+-- ── 7. State counts (filtered only, for bubble map) ──────────────────────────
+state_counts AS (
+    SELECT
+        licplte_st                             AS state,
+        COUNT(*)                               AS cnt
+    FROM filtered
+    WHERE licplte_st IS NOT NULL
+      AND licplte_st ~ '^[A-Z]{2}$'
+    GROUP BY licplte_st
+),
+
+-- ── 8. Box plot stats by damage type ─────────────────────────────────────────
+box_base AS (
+    SELECT
+        dmg_dsc,
+        MIN(est_tot_amt)                                                      AS bmin,
+        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY est_tot_amt)             AS q1,
+        PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY est_tot_amt)             AS median,
+        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY est_tot_amt)             AS q3,
+        MAX(est_tot_amt)                                                      AS bmax
+    FROM base
+    WHERE dmg_dsc IS NOT NULL
+    GROUP BY dmg_dsc
+),
+box_filt AS (
+    SELECT
+        dmg_dsc,
+        MIN(est_tot_amt)                                                      AS bmin,
+        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY est_tot_amt)             AS q1,
+        PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY est_tot_amt)             AS median,
+        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY est_tot_amt)             AS q3,
+        MAX(est_tot_amt)                                                      AS bmax
+    FROM filtered
+    WHERE dmg_dsc IS NOT NULL
+    GROUP BY dmg_dsc
+)
+
+-- ── Assemble all sections into a single JSON object ───────────────────────────
+SELECT json_build_object(
+
+    'kpis', (SELECT row_to_json(k) FROM kpis k),
+
+    'hist_amt', (
+        SELECT json_agg(row_to_json(r) ORDER BY r.ord)
+        FROM hist_amt r
+    ),
+    'hist_labor', (
+        SELECT json_agg(row_to_json(r) ORDER BY r.ord)
+        FROM hist_labor r
+    ),
+    'hist_lines', (
+        SELECT json_agg(row_to_json(r) ORDER BY r.ord)
+        FROM hist_lines r
+    ),
+    'hist_time', (
+        SELECT json_agg(row_to_json(r) ORDER BY r.ord)
+        FROM hist_time r
+    ),
+
+    'dmg_counts', (
+        SELECT json_agg(row_to_json(r) ORDER BY r.total DESC)
+        FROM dmg_counts r
+    ),
+
+    'state_counts', (
+        SELECT json_agg(row_to_json(r))
+        FROM state_counts r
+    ),
+
+    'box_base', (
+        SELECT json_agg(json_build_object(
+            'dmg_dsc', b.dmg_dsc,
+            'q1',      b.q1,
+            'median',  b.median,
+            'q3',      b.q3,
+            'lf',      GREATEST(b.bmin, b.q1 - 1.5 * (b.q3 - b.q1)),
+            'uf',      LEAST(b.bmax,   b.q3 + 1.5 * (b.q3 - b.q1))
+        ))
+        FROM box_base b
+    ),
+
+    'box_filt', (
+        SELECT json_agg(json_build_object(
+            'dmg_dsc', f.dmg_dsc,
+            'q1',      f.q1,
+            'median',  f.median,
+            'q3',      f.q3,
+            'lf',      GREATEST(f.bmin, f.q1 - 1.5 * (f.q3 - f.q1)),
+            'uf',      LEAST(f.bmax,   f.q3 + 1.5 * (f.q3 - f.q1))
+        ))
+        FROM box_filt f
+    )
+
+) INTO v_result;
+
+RETURN v_result;
+
+END;
+$func$;
