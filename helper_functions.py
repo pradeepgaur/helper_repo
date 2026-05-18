@@ -252,7 +252,7 @@ kpis AS (
         COALESCE(SUM(CASE WHEN rvsn_nbr = 1
                      THEN time_to_approve_hours ELSE 0 END), 0)               AS time_saved_hrs,
         COALESCE(SUM(CASE WHEN rvsn_nbr = 1
-                     THEN (apprv_dte - est_recv_dte)
+                     THEN time_to_approve_days
                      ELSE 0 END), 0)                                          AS time_saved_days,
         AVG(CASE WHEN rvsn_nbr = 1  THEN est_tot_amt ELSE NULL END)           AS mean_correct_amt,
         AVG(CASE WHEN rvsn_nbr > 1  THEN est_tot_amt ELSE NULL END)           AS mean_wrong_amt,
